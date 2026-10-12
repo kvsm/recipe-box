@@ -29,10 +29,33 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Run tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee -a build-log.txt
 
       - name: Build APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee -a build-log.txt
+
+      # If anything fails: surface compile errors as annotations, and put the full log on the
+      # "ci-log" branch so it can be read with plain git.
+      - name: Share the failure log
+        if: failure()
+        run: |
+          grep -E "^e: |^w: .*error|What went wrong|Execution failed|FAILED$" build-log.txt | head -40 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+          git config user.name "build bot"
+          git config user.email "actions@users.noreply.github.com"
+          cp build-log.txt /tmp/build-log.txt
+          git checkout --orphan ci-log
+          git rm -rfq . || true
+          cp /tmp/build-log.txt build-log.txt
+          echo "${GITHUB_SHA}" > commit.txt
+          git add build-log.txt commit.txt
+          git commit -qm "Build log for ${GITHUB_SHA::7}"
+          git push -f origin ci-log
 
       - name: Keep the APK with this run
         uses: actions/upload-artifact@v4
