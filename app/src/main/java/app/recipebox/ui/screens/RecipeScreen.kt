@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -91,6 +92,7 @@ fun RecipeScreen(
     onBack: () -> Unit,
     onCook: (servings: Int?) -> Unit,
     onSendToList: (List<GroceryItem>) -> Unit,
+    sendingToList: Boolean = false,
     onDelete: () -> Unit,
     onEditIngredient: (index: Int, Ingredient) -> Unit,
     onSetPhoto: (uri: Uri?, fromCamera: Boolean) -> Unit,
@@ -224,13 +226,20 @@ fun RecipeScreen(
         val addButton: @Composable () -> Unit = {
             if (stillNeeded.isNotEmpty()) {
                 StickerButton(
-                    onClick = { onSendToList(stillNeeded.map { it.value.groceryParts(factor).let { (n, q) -> GroceryItem(n, q) } }) },
+                    onClick = {
+                        if (!sendingToList) onSendToList(stillNeeded.map { it.value.groceryParts(factor).let { (n, q) -> GroceryItem(n, q) } })
+                    },
                     fill = Tin.Saffron,
                     minHeight = 44.dp,
                     shadowOffset = 3.dp,
                     contentPadding = PaddingValues(horizontal = 14.dp),
                 ) {
-                    LineIcons.Basket()
+                    // The trolley turns into a spinner while OurGroceries is being talked to.
+                    if (sendingToList) {
+                        CircularProgressIndicator(Modifier.size(22.dp), color = Tin.Ink, strokeWidth = 2.4.dp)
+                    } else {
+                        LineIcons.Basket()
+                    }
                     Text("Add ${stillNeeded.size} to list", style = MaterialTheme.typography.titleMedium)
                 }
             }

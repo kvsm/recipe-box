@@ -79,6 +79,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Each removal, for the "Removed … Undo" snackbar. */
     val removed: SharedFlow<Removed> = _removed
 
+    private val _sendingToList = MutableStateFlow(false)
+    /** True while items are on their way to OurGroceries, for the button's spinner. */
+    val sendingToList = _sendingToList.asStateFlow()
+
     private val _groceryFailure = MutableStateFlow<GroceryFailure?>(null)
     val groceryFailure = _groceryFailure.asStateFlow()
 
@@ -200,9 +204,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun sendToList(items: List<GroceryItem>) {
-        if (items.isEmpty()) return
+        if (items.isEmpty() || _sendingToList.value) return
+        _sendingToList.value = true
         viewModelScope.launch {
-            when (val outcome = container.groceries.send(items)) {
+            val outcome = try {
+                container.groceries.send(items)
+            } finally {
+                _sendingToList.value = false
+            }
+            when (outcome) {
                 is GroceryRouter.Outcome.Added -> _messages.emit(
                     (if (outcome.count == items.size) "Added ${outcome.count} to ${outcome.listName}"
                     else "Added ${outcome.count} of ${items.size} to ${outcome.listName}") +

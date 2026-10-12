@@ -71,6 +71,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
     val imports by vm.imports.collectAsStateWithLifecycle()
     val justSaved by vm.justSaved.collectAsStateWithLifecycle()
     val hasClaudeKey by vm.hasClaudeKey.collectAsStateWithLifecycle()
+    val sendingToList by vm.sendingToList.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     LaunchedEffect(Unit) {
@@ -138,6 +139,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                             onBack = { openId = null },
                             onCook = { cookServings = it; cooking = true },
                             onSendToList = vm::sendToList,
+                            sendingToList = sendingToList,
                             onDelete = { vm.delete(current.id); openId = null },
                             onEditIngredient = { index, fixed -> vm.updateIngredient(current, index, fixed) },
                             onSetPhoto = { uri, camera -> vm.setPhoto(current, uri, camera) },
@@ -165,6 +167,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                         onBack = { openId = null },
                         onCook = { cookServings = it; cooking = true },
                         onSendToList = vm::sendToList,
+                            sendingToList = sendingToList,
                         onDelete = { vm.delete(id); openId = null },
                         onEditIngredient = { index, fixed -> vm.updateIngredient(current, index, fixed) },
                         onSetPhoto = { uri, camera -> vm.setPhoto(current, uri, camera) },
