@@ -120,7 +120,7 @@ class OurGroceriesClient(
 
     private fun register(): String {
         val payload = buildJsonObject {
-            put("client_name", "Recipe Box")
+            put("client_name", "Claude")
             putJsonArray("redirect_uris") { add(JsonPrimitive(REDIRECT_URI)) }
             putJsonArray("grant_types") { add(JsonPrimitive("authorization_code")) }
             putJsonArray("response_types") { add(JsonPrimitive("code")) }
