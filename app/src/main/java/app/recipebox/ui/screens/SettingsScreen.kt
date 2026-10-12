@@ -42,11 +42,7 @@ import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.recipebox.ui.components.LineIcons
@@ -121,10 +117,7 @@ fun SettingsScreen(
                     onValueChange = { key = it },
                     label = { Text("API key") },
                     singleLine = true,
-                    // Masked with our own dots, not PasswordVisualTransformation: that marks the box as a
-                    // password field, and password managers then fill the OurGroceries password in here.
-                    visualTransformation = MaskedKey,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false),
+                    visualTransformation = PasswordVisualTransformation(),
                     colors = fieldColours(),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -289,9 +282,3 @@ private fun fieldColours() = OutlinedTextFieldDefaults.colors(
     unfocusedBorderColor = Tin.Ink,
     focusedLabelColor = Tin.Ink,
 )
-
-/** Shows a key as dots without telling autofill it's a password. */
-private object MaskedKey : VisualTransformation {
-    override fun filter(text: AnnotatedString) =
-        TransformedText(AnnotatedString("•".repeat(text.length)), OffsetMapping.Identity)
-}
