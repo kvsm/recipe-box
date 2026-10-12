@@ -205,31 +205,61 @@ private val textUnits = mapOf(
     "oz" to "oz", "ounce" to "oz", "ounces" to "oz", "lb" to "lb", "lbs" to "lb", "pound" to "lb", "pounds" to "lb",
     "cup" to "cup", "cups" to "cup", "pint" to "pint", "pints" to "pint", "quart" to "quart", "quarts" to "quart",
     "stick" to "stick", "sticks" to "stick",
+    // Spoons are never converted, but they are scaled with the servings.
+    "tsp" to "tsp", "teaspoon" to "tsp", "teaspoons" to "tsp",
+    "tbsp" to "tbsp", "tbs" to "tbsp", "tablespoon" to "tbsp", "tablespoons" to "tbsp",
 )
 
-/**
- * An amount and unit in running text: "200g", "1 1/2 cups", "2–3 lb", "4 fl oz".
- * Skipped when it's already paired with a conversion, as in "200g (7oz)" or "200g/7oz",
- * so the recipe's own conversions aren't doubled up.
- */
+/** An amount and unit in running text: "200g", "1 1/2 cups", "2–3 lb", "4 fl oz", "2 tbsp". */
 private val textAmount = Regex(
-    """(?<![\w.(/])(?<![(/]\s)($NUM)(?:\s*(?:-|–|to)\s*($NUM))?\s*(fl\.?\s?oz|""" +
+    """(?<![\w.])($NUM)(?:\s*(?:-|–|to)\s*($NUM))?\s*(fl\.?\s?oz|""" +
         textUnits.keys.sortedByDescending { it.length }.joinToString("|") +
-        """)\b(?!\s*[(/])""",
+        """)\b""",
     RegexOption.IGNORE_CASE,
 )
 
-/** "2 cups flour" → "250 g (2 cups) flour", in [measures]' system. Spoons and counts are left alone. */
-fun convertAmountsInText(text: String, measures: Measures): String = textAmount.replace(text) { m ->
-    val low = parseAmountNumber(m.groupValues[1]) ?: return@replace m.value
-    val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { parseAmountNumber(it) ?: return@replace m.value }
+/**
+ * Amounts in step text, scaled by [factor] (the servings) and put into [measures]' system:
+ * "2 cups flour" → "250 g (2 cups) flour"; doubled, "500 g (4 cups) flour". The bracketed
+ * original is scaled too, so the two always agree. Spoons are scaled but never converted.
+ * Amounts the recipe already pairs with a conversion, as in "200g/7oz" or "200g (7oz)",
+ * are scaled but not converted again, so the recipe's own conversions aren't doubled up.
+ * Bare counts ("3 eggs") are left alone: in a method they're as often pieces or batches.
+ */
+fun convertAmountsInText(text: String, measures: Measures, factor: Double = 1.0): String = textAmount.replace(text) { m ->
+    val low = parseAmountNumber(m.groupValues[1])?.times(factor) ?: return@replace m.value
+    val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { (parseAmountNumber(it) ?: return@replace m.value) * factor }
     val rawUnit = m.groupValues[3].lowercase()
     val unit = if (rawUnit.startsWith("fl")) "fl oz" else textUnits[rawUnit] ?: return@replace m.value
-    // What's being measured, for cups of flour vs cups of milk: the next few words, up to any punctuation.
-    val what = text.substring(m.range.last + 1).split(',', '.', ';', ':', '(').first()
-        .trim().split(Regex("\\s+")).take(4).joinToString(" ")
-    val converted = convertAmount(low, high, unit, what, measures) ?: return@replace m.value
-    "${formatAmount(converted)} (${m.value.trim()})"
+    // The amount as written, scaled: what goes in brackets, or on its own if there's nothing to convert.
+    val original = if (factor == 1.0) m.value.trim() else formatAmount(tidy(low, high, unit))
+    if (!pairedWithConversion(text, m.range)) {
+        // What's being measured, for cups of flour vs cups of milk: the next few words, up to any punctuation.
+        val what = text.substring(m.range.last + 1).split(',', '.', ';', ':', '(').first()
+            .trim().split(Regex("\\s+")).take(4).joinToString(" ")
+        convertAmount(low, high, unit, what, measures)?.let { return@replace "${formatAmount(it)} ($original)" }
+    }
+    original
+}
+
+/** True for either half of "200g (7oz)" or "200g/7oz". */
+private fun pairedWithConversion(text: String, range: IntRange): Boolean {
+    val before = text.substring(0, range.first).trimEnd().lastOrNull()
+    val after = text.substring(range.last + 1).trimStart().firstOrNull()
+    return before == '(' || before == '/' || after == '(' || after == '/'
+}
+
+/** A scaled amount rounded the way its unit is usually written. */
+private fun tidy(low: Double, high: Double?, unit: String): Converted {
+    val round: (Double) -> Double = when (unit) {
+        "g", "ml" -> ::roundMetric
+        "kg", "l" -> { v -> roundTo(v, 0.1) }
+        "oz" -> { v -> if (v < 4) roundTo(v, 0.25) else roundTo(v, 0.5) }
+        "fl oz" -> { v -> if (v < 4) roundTo(v, 0.5) else roundTo(v, 1.0) }
+        "tsp", "tbsp" -> { v -> roundTo(v, 0.25) }
+        else -> { v -> v } // cups, pounds, pints: formatQuantity finds the nearest fraction
+    }
+    return Converted(round(low), high?.let(round), unit)
 }
 
 private val temperature = Regex(
@@ -259,13 +289,13 @@ fun convertTemperatures(text: String, system: UnitSystem): String = temperature.
     }
 }
 
-/** Step text in [measures]' units: amounts and oven temperatures. */
-fun convertText(text: String, measures: Measures): String =
-    convertTemperatures(convertAmountsInText(text, measures), measures.system)
+/** Step text with amounts scaled by [factor] and, like oven temperatures, in [measures]' units. */
+fun convertText(text: String, measures: Measures, factor: Double = 1.0): String =
+    convertTemperatures(convertAmountsInText(text, measures, factor), measures.system)
 
-/** The recipe's step and Get ready text in [measures]' units. Ingredients are converted line by line instead. */
-fun Recipe.textIn(measures: Measures): Recipe = copy(
-    instructions = instructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures) }) },
-    originalInstructions = originalInstructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures) }) },
-    prep = prep.map { it.copy(text = convertText(it.text, measures)) },
+/** The recipe's step and Get ready text, scaled and in [measures]' units. Ingredients are handled line by line instead. */
+fun Recipe.textIn(measures: Measures, factor: Double = 1.0): Recipe = copy(
+    instructions = instructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures, factor) }) },
+    originalInstructions = originalInstructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures, factor) }) },
+    prep = prep.map { it.copy(text = convertText(it.text, measures, factor)) },
 )

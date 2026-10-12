@@ -46,8 +46,6 @@ import app.recipebox.ui.screens.RecipeScreen
 import app.recipebox.ui.screens.SavedSheet
 import app.recipebox.ui.screens.SettingsScreen
 import app.recipebox.ui.screens.TinScreen
-import app.recipebox.data.model.Measures
-import app.recipebox.data.model.textIn
 import app.recipebox.ui.theme.RecipeBoxTheme
 
 class MainActivity : ComponentActivity() {
@@ -140,8 +138,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                     val current = id?.let { openRecipe(vm, it) }
                     if (current != null) {
                         RecipeScreen(
-                            // Oven temperatures in the steps shown in the chosen units; the saved recipe is untouched.
-                            recipe = remember(current, units) { current.textIn(Measures.forRecipe(units, current.sourceUrl)) },
+                            recipe = current,
                             units = units,
                             snackbar = snackbar,
                             onBack = { openId = null },
@@ -168,14 +165,14 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
             if (current != null) {
                 if (cooking) {
                     CookScreen(
-                        remember(current, units) { current.textIn(Measures.forRecipe(units, current.sourceUrl)) },
+                        current,
                         onExit = { cooking = false },
                         factor = scaleFor(current, cookServings),
                         units = units,
                     )
                 } else {
                     RecipeScreen(
-                        recipe = remember(current, units) { current.textIn(Measures.forRecipe(units, current.sourceUrl)) },
+                        recipe = current,
                         units = units,
                         snackbar = snackbar,
                         onBack = { openId = null },

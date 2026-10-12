@@ -73,6 +73,7 @@ import app.recipebox.data.model.Measures
 import app.recipebox.data.model.UnitSystem
 import app.recipebox.data.model.amountLabel
 import app.recipebox.data.model.forCard
+import app.recipebox.data.model.textIn
 import app.recipebox.data.model.pluralUnit
 import app.recipebox.groceries.GroceryItem
 import app.recipebox.ui.components.BowlArt
@@ -124,6 +125,9 @@ fun RecipeScreen(
         uri?.let { onSetPhoto(it, false) }
     }
     val factor = if (base != null && base > 0 && servings > 0) servings.toDouble() / base else 1.0
+    // Steps and Get ready with amounts scaled to the servings and, like oven temperatures, in the chosen units.
+    // Only for showing: the saved recipe is untouched.
+    val steps = remember(recipe, measures, factor) { recipe.textIn(measures, factor) }
     val uriHandler = LocalUriHandler.current
 
     val stillNeeded = recipe.ingredients.withIndex().filter { it.index !in gathered }
@@ -283,9 +287,9 @@ fun RecipeScreen(
                 }
         }
         val methodBlock: LazyListScope.() -> Unit = {
-                if (recipe.prep.isNotEmpty()) {
+                if (steps.prep.isNotEmpty()) {
                     item { SectionTitle("Get ready", top = 30.dp) }
-                    itemsIndexed(recipe.prep) { _, task ->
+                    itemsIndexed(steps.prep) { _, task ->
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -326,7 +330,7 @@ fun RecipeScreen(
                         }
                     }
                 }
-                method(if (showOriginal) recipe.originalInstructions else recipe.instructions)
+                method(if (showOriginal) steps.originalInstructions else steps.instructions)
 
                 item {
                     Column(Modifier.padding(start = 12.dp, top = 24.dp)) {

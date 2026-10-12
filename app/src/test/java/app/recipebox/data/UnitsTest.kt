@@ -94,6 +94,23 @@ class UnitsTest {
         assertEquals("Stir in 200g/7oz flour.", convertAmountsInText("Stir in 200g/7oz flour.", imperialUk))
     }
 
+    @Test fun `method amounts follow the servings`() {
+        // Doubled: converted, with the original doubled in brackets.
+        assertEquals("Fold in 500 g (4 cups) flour.", convertAmountsInText("Fold in 2 cups flour.", metric, factor = 2.0))
+        // Halved, nothing to convert: just the smaller amount.
+        assertEquals("Pour in 250 ml stock.", convertAmountsInText("Pour in 500ml stock.", metric, factor = 0.5))
+        // Spoons scale too, and a recipe's own pair is scaled on both sides.
+        assertEquals(
+            "Add 400 g/14 oz flour and 4 tbsp oil.",
+            convertAmountsInText("Add 200g/7oz flour and 2 tbsp oil.", metric, factor = 2.0),
+        )
+        // Counts and temperatures don't scale.
+        assertEquals(
+            "Crack in 3 eggs and bake at 180°C for 20 minutes.",
+            convertAmountsInText("Crack in 3 eggs and bake at 180°C for 20 minutes.", metric, factor = 2.0),
+        )
+    }
+
     @Test fun `oven temperatures convert both ways and keep the original`() {
         assertEquals("Bake at 180°C (350°F) for 20 minutes", convertTemperatures("Bake at 350°F for 20 minutes", UnitSystem.METRIC))
         assertEquals("Bake at 180°C (350°F) for 20 minutes", convertTemperatures("Bake at 350°F for 20 minutes", UnitSystem.IMPERIAL_UK))

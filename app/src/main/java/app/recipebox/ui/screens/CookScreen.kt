@@ -53,6 +53,7 @@ import app.recipebox.data.model.Recipe
 import app.recipebox.data.model.Measures
 import app.recipebox.data.model.UnitSystem
 import app.recipebox.data.model.lineFor
+import app.recipebox.data.model.textIn
 import app.recipebox.ui.components.LineIcons
 import app.recipebox.ui.components.RoundStickerButton
 import app.recipebox.ui.components.ScribbleCheckRow
@@ -69,7 +70,9 @@ import kotlinx.coroutines.launch
  * has prep pulled forward, the first page is "Get ready".
  */
 @Composable
-fun CookScreen(recipe: Recipe, onExit: () -> Unit, factor: Double = 1.0, units: UnitSystem = UnitSystem.METRIC) {
+fun CookScreen(saved: Recipe, onExit: () -> Unit, factor: Double = 1.0, units: UnitSystem = UnitSystem.METRIC) {
+    // Steps with amounts scaled to the servings chosen and in the chosen units; the saved recipe is untouched.
+    val recipe = remember(saved, units, factor) { saved.textIn(Measures.forRecipe(units, saved.sourceUrl), factor) }
     val steps = remember(recipe) { recipe.instructions.flatMap { it.steps } }
     val hasPrep = recipe.prep.isNotEmpty()
     val pageCount = steps.size + if (hasPrep) 1 else 0
