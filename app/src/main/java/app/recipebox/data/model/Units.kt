@@ -251,9 +251,14 @@ private fun pairedWithConversion(text: String, range: IntRange): Boolean {
 
 /** A scaled amount rounded the way its unit is usually written. */
 private fun tidy(low: Double, high: Double?, unit: String): Converted {
+    // Metric moves between g and kg (ml and l) as it grows or shrinks: 500 g doubled is 1 kg.
+    when (unit) {
+        "g" -> return grams(low, high)
+        "kg" -> return grams(low * 1000, high?.times(1000))
+        "ml" -> return millilitres(low, high)
+        "l" -> return millilitres(low * 1000, high?.times(1000))
+    }
     val round: (Double) -> Double = when (unit) {
-        "g", "ml" -> ::roundMetric
-        "kg", "l" -> { v -> roundTo(v, 0.1) }
         "oz" -> { v -> if (v < 4) roundTo(v, 0.25) else roundTo(v, 0.5) }
         "fl oz" -> { v -> if (v < 4) roundTo(v, 0.5) else roundTo(v, 1.0) }
         "tsp", "tbsp" -> { v -> roundTo(v, 0.25) }
@@ -289,13 +294,95 @@ fun convertTemperatures(text: String, system: UnitSystem): String = temperature.
     }
 }
 
+// ---------- Counted ingredients in method text ----------
+
+private val numberWords = mapOf(
+    "one" to 1.0, "two" to 2.0, "three" to 3.0, "four" to 4.0, "five" to 5.0, "six" to 6.0,
+    "seven" to 7.0, "eight" to 8.0, "nine" to 9.0, "ten" to 10.0, "eleven" to 11.0, "twelve" to 12.0,
+)
+
+/** Words that can sit between a count and what's counted: "3 large eggs", "2 of the onions". */
+private val countFiller = setOf(
+    "of", "the", "large", "small", "medium", "whole", "fresh", "free-range", "ripe", "big", "extra",
+    "more", "remaining", "beaten", "peeled", "red", "white", "brown", "yellow", "green", "spring", "baby",
+)
+
+private fun pluralOf(word: String): String = when {
+    word.endsWith("s") -> word
+    word.endsWith("o") || word.endsWith("ch") || word.endsWith("sh") || word.endsWith("x") -> word + "es"
+    word.endsWith("y") && word.length > 2 && word[word.length - 2] !in "aeiou" -> word.dropLast(1) + "ies"
+    else -> word + "s"
+}
+
+private fun singularOf(word: String): String = when {
+    word.endsWith("ies") -> word.dropLast(3) + "y"
+    word.endsWith("oes") || word.endsWith("ches") || word.endsWith("shes") || word.endsWith("xes") -> word.dropLast(2)
+    word.endsWith("s") && !word.endsWith("ss") -> word.dropLast(1)
+    else -> word
+}
+
+/**
+ * The words that name a counted ingredient in this recipe, singular and plural: for "3 large eggs"
+ * and "2 garlic cloves", {egg, eggs, garlic, clove, cloves, …}. Weighed and measured ingredients
+ * are left out, since their amounts in the method carry a unit and are handled already.
+ */
+fun countedIngredientWords(ingredients: List<Ingredient>): Set<String> = ingredients
+    .filter { it.quantity != null && (it.unit == null || it.unit.lowercase() !in textUnits) }
+    .flatMap { ing ->
+        val words = ing.name.lowercase().split(Regex("[^a-z-]+")).filter { it.length > 2 && it !in countFiller }
+        // The name's head word ("eggs" in "large free-range eggs"), any other naming words, and a counted unit ("cloves").
+        (words + listOfNotNull(ing.unit?.lowercase()?.substringAfterLast(' ')))
+    }
+    .flatMap { listOf(it, pluralOf(it), singularOf(it)) }
+    .toSet()
+
+private fun countPattern(words: Set<String>): Regex {
+    val num = """(\d+(?:\.\d+)?[½¼¾⅓⅔]?|[½¼¾⅓⅔]|${numberWords.keys.joinToString("|")})"""
+    val filler = (countFiller + words).sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
+    val target = words.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
+    return Regex(
+        """(?<![\w.])$num(?:\s*(?:-|–|to)\s*$num)?\s+((?:(?:$filler)\s+){0,2})($target)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+}
+
+/**
+ * Scales counts of the recipe's own counted ingredients: doubled, "crack in 3 eggs" becomes
+ * "crack in 6 eggs" and "add 1 onion" becomes "add 2 onions". Counts of anything else
+ * ("cook in 2 batches", "cut into 4 pieces") are left alone.
+ */
+fun scaleCountsInText(text: String, countedWords: Set<String>, factor: Double): String {
+    if (factor == 1.0 || countedWords.isEmpty()) return text
+    return countPattern(countedWords).replace(text) { m ->
+        fun read(s: String) = numberWords[s.lowercase()] ?: parseAmountNumber(s)
+        val low = read(m.groupValues[1]) ?: return@replace m.value
+        val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { read(it) ?: return@replace m.value }
+        val newLow = low * factor
+        val newHigh = high?.times(factor)
+        val top = newHigh ?: newLow
+        val word = m.groupValues[4]
+        // "1 onion" doubled is "2 onions"; "2 eggs" halved is "1 egg".
+        val noun = when {
+            (high ?: low) <= 1.0 && top > 1.0 -> pluralOf(word)
+            (high ?: low) > 1.0 && top <= 1.0 -> singularOf(word)
+            else -> word
+        }
+        val amount = formatQuantity(newLow) + (newHigh?.let { "–" + formatQuantity(it) } ?: "")
+        "$amount ${m.groupValues[3]}$noun"
+    }
+}
+
 /** Step text with amounts scaled by [factor] and, like oven temperatures, in [measures]' units. */
-fun convertText(text: String, measures: Measures, factor: Double = 1.0): String =
-    convertTemperatures(convertAmountsInText(text, measures, factor), measures.system)
+fun convertText(text: String, measures: Measures, factor: Double = 1.0, countedWords: Set<String> = emptySet()): String =
+    convertTemperatures(convertAmountsInText(scaleCountsInText(text, countedWords, factor), measures, factor), measures.system)
 
 /** The recipe's step and Get ready text, scaled and in [measures]' units. Ingredients are handled line by line instead. */
-fun Recipe.textIn(measures: Measures, factor: Double = 1.0): Recipe = copy(
-    instructions = instructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures, factor) }) },
-    originalInstructions = originalInstructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures, factor) }) },
-    prep = prep.map { it.copy(text = convertText(it.text, measures, factor)) },
-)
+fun Recipe.textIn(measures: Measures, factor: Double = 1.0): Recipe {
+    val counted = countedIngredientWords(ingredients)
+    fun convert(text: String) = convertText(text, measures, factor, counted)
+    return copy(
+        instructions = instructions.map { s -> s.copy(steps = s.steps.map(::convert)) },
+        originalInstructions = originalInstructions.map { s -> s.copy(steps = s.steps.map(::convert)) },
+        prep = prep.map { it.copy(text = convert(it.text)) },
+    )
+}

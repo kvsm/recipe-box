@@ -4,6 +4,8 @@ import app.recipebox.data.model.Measures
 import app.recipebox.data.model.UnitSystem
 import app.recipebox.data.model.convertAmountsInText
 import app.recipebox.data.model.convertTemperatures
+import app.recipebox.data.model.convertText
+import app.recipebox.data.model.countedIngredientWords
 import app.recipebox.data.model.groceryParts
 import app.recipebox.data.model.lineFor
 import app.recipebox.importer.IngredientParser
@@ -104,11 +106,27 @@ class UnitsTest {
             "Add 400 g/14 oz flour and 4 tbsp oil.",
             convertAmountsInText("Add 200g/7oz flour and 2 tbsp oil.", metric, factor = 2.0),
         )
-        // Counts and temperatures don't scale.
+        // Temperatures and times don't scale.
         assertEquals(
-            "Crack in 3 eggs and bake at 180°C for 20 minutes.",
-            convertAmountsInText("Crack in 3 eggs and bake at 180°C for 20 minutes.", metric, factor = 2.0),
+            "Bake at 180°C for 20 minutes.",
+            convertAmountsInText("Bake at 180°C for 20 minutes.", metric, factor = 2.0),
         )
+    }
+
+    @Test fun `counts of the recipe's own ingredients scale, other counts don't`() {
+        val counted = countedIngredientWords(
+            listOf("3 large eggs", "1 onion, finely chopped", "2 garlic cloves", "500g beef mince", "1 lemon")
+                .map(IngredientParser::parse),
+        )
+        fun scaled(text: String, factor: Double) = convertText(text, metric, factor, counted)
+        assertEquals(
+            "Crack in 6 eggs, add 2 onions and 4 garlic cloves, then cook in 2 batches.",
+            scaled("Crack in 3 eggs, add 1 onion and 2 garlic cloves, then cook in 2 batches.", 2.0),
+        )
+        assertEquals("Beat 6 large eggs.", scaled("Beat three large eggs.", 2.0))
+        assertEquals("Squeeze in the juice of 1 lemon.", scaled("Squeeze in the juice of 2 lemons.", 0.5))
+        // Doubled 500g reads as 1 kg, and "4 pieces" isn't an ingredient so stays put.
+        assertEquals("Cut into 4 pieces and fry 1 kg mince.", scaled("Cut into 4 pieces and fry 500g mince.", 2.0))
     }
 
     @Test fun `oven temperatures convert both ways and keep the original`() {
