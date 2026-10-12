@@ -71,6 +71,18 @@ class UnitsTest {
         assertEquals("680 g beef mince", line("1 lb beef mince", metric, factor = 1.5))
     }
 
+    @Test fun `scaling keeps the recipe's own wording`() {
+        assertEquals("4 medium onions, finely chopped", line("2 medium onions, finely chopped", metric, factor = 2.0))
+        assertEquals("2 onions, chopped", line("1 onion, chopped", metric, factor = 2.0))
+        assertEquals("1 egg", line("2 eggs", metric, factor = 0.5))
+        assertEquals("2 pinches of salt", line("a pinch of salt", metric, factor = 2.0))
+        assertEquals("4 x 400g tins chopped tomatoes", line("2 x 400g tins chopped tomatoes", metric, factor = 2.0))
+        assertEquals("2 garlic cloves, crushed", line("1 garlic clove, crushed", metric, factor = 2.0))
+        assertEquals("910 g beef mince, 5% fat", line("1 lb beef mince, 5% fat", metric, factor = 2.0))
+        // Given both ways: scaled on both sides, chosen system first.
+        assertEquals("9oz/250g plain flour", line("250g/9oz plain flour", imperialUk))
+    }
+
     @Test fun `shopping list gets converted amounts`() {
         assertEquals("beef mince" to "450 g", IngredientParser.parse("1 lb beef mince").groceryParts(1.0, metric))
     }

@@ -73,6 +73,7 @@ import app.recipebox.data.model.Measures
 import app.recipebox.data.model.UnitSystem
 import app.recipebox.data.model.amountLabel
 import app.recipebox.data.model.forCard
+import app.recipebox.data.model.scaledLine
 import app.recipebox.data.model.textIn
 import app.recipebox.data.model.pluralUnit
 import app.recipebox.groceries.GroceryItem
@@ -265,19 +266,14 @@ fun RecipeScreen(
                     ) {
                         Text(
                             buildAnnotatedString {
-                                // Scaled, converted or corrected lines are rebuilt with the amount in bold;
-                                // anything else shows exactly as the recipe had it.
-                                val shown = ingredient.forCard(factor, measures)
-                                if (shown == null) {
+                                // The recipe's own wording, with a scaled or converted amount in bold.
+                                val line = ingredient.scaledLine(factor, measures)
+                                if (line == null) {
                                     append(ingredient.raw)
                                 } else {
-                                    val amount = shown.amountLabel()
-                                    if (!amount.isNullOrBlank()) {
-                                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(amount) }
-                                        append(" ")
-                                    }
-                                    append(shown.name)
-                                    shown.note?.let { append(", $it") }
+                                    append(line.before)
+                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(line.amount) }
+                                    append(line.after)
                                 }
                             },
                             style = MaterialTheme.typography.bodyLarge,

@@ -151,6 +151,4 @@ fun Ingredient.editedDisplay(factor: Double = 1.0): String {
 
 /** The line as the recipe card shows it: the user's fix, the scaled or converted amount, or the original text. */
 fun Ingredient.lineFor(factor: Double = 1.0, measures: Measures? = null): String =
-    forCard(factor, measures)?.let { shown ->
-        listOfNotNull(shown.amountLabel()?.ifBlank { null }, shown.name).joinToString(" ") + (shown.note?.let { ", $it" } ?: "")
-    } ?: raw
+    scaledLine(factor, measures)?.toString() ?: raw
