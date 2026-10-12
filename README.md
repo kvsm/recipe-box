@@ -51,7 +51,7 @@ The app is its own MCP client for OurGroceries' official, experimental MCP serve
 - **Sign-in:** dynamic client registration, then OAuth authorization code with PKCE in a Custom Tab. The redirect is `app.recipebox:/oauth/ourgroceries`. Only the access token is stored, encrypted.
 - **Adding items:** `initialize`, then `get_lists` (finds the list ID for the name set in Settings, default "Shopping"), then one `edit_items` batch of `add` operations. Each ingredient goes in as the item name, with the scaled quantity as its note.
 - **Fallback:** if it isn't connected or a call fails, items are copied to the clipboard and OurGroceries is opened.
-- **Not yet confirmed:** whether OurGroceries' registration endpoint accepts a custom-scheme redirect. If it rejects it, switch to an https App Link redirect.
+- **Needs OurGroceries' approval:** their registration endpoint only accepts client names it knows, and refuses "Recipe Box" with `invalid_client_metadata: Unknown client_name`. Until they allow it (custom-scheme redirect `app.recipebox:/oauth/ourgroceries`, or a client ID metadata document, which their server also supports), Connect fails with that explanation and Add to list uses the clipboard fallback.
 
 ## Code map
 

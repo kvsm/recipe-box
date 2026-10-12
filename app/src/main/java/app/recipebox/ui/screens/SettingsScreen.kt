@@ -131,7 +131,7 @@ fun SettingsScreen(
                     if (ourGroceriesConnected) {
                         "Connected. \"Add to list\" puts ingredients straight onto your list."
                     } else {
-                        "Connect so \"Add to list\" goes straight into OurGroceries. You sign in on their page; this app never sees your password. Until then, items are copied for you to paste."
+                        "Right now \"Add to list\" copies your items and opens OurGroceries for you to paste them in. Connecting puts them straight onto your list, filed in the right aisles, but OurGroceries has to approve Recipe Box first. Once it has, tap Connect and sign in on their page; this app never sees your password."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Tin.Ink,

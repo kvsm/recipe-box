@@ -104,7 +104,9 @@ class OurGroceriesClient(
             .build()
         val body = http.newCall(Request.Builder().url(TOKEN).post(form).build()).execute().use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw GroceryException("OurGroceries sign-in failed (${response.code}).")
+            if (!response.isSuccessful) {
+                throw GroceryException("OurGroceries sign-in failed (${response.code}${errorDescription(text)?.let { ": $it" } ?: ""}).")
+            }
             json.parseToJsonElement(text).jsonObject
         }
         val token = body["access_token"]?.jsonPrimitive?.contentOrNull
@@ -118,9 +120,15 @@ class OurGroceriesClient(
         secrets.put(SecretStore.OG_STATE, null)
     }
 
+    /** OAuth servers explain a refusal in error_description (or at least error); null if the body isn't that. */
+    private fun errorDescription(body: String): String? = runCatching {
+        val obj = json.parseToJsonElement(body).jsonObject
+        (obj["error_description"] ?: obj["error"])?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
+
     private fun register(): String {
         val payload = buildJsonObject {
-            put("client_name", "Claude")
+            put("client_name", "Recipe Box")
             putJsonArray("redirect_uris") { add(JsonPrimitive(REDIRECT_URI)) }
             putJsonArray("grant_types") { add(JsonPrimitive("authorization_code")) }
             putJsonArray("response_types") { add(JsonPrimitive("code")) }
@@ -130,7 +138,14 @@ class OurGroceriesClient(
         return http.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw GroceryException("OurGroceries wouldn't register the app (${response.code}). It may not accept app redirects yet.")
+                val reason = errorDescription(text)
+                throw GroceryException(
+                    if (reason?.contains("client_name", ignoreCase = true) == true) {
+                        "OurGroceries hasn't approved Recipe Box yet. Until it does, Add to list copies your items to paste in."
+                    } else {
+                        "OurGroceries wouldn't register the app (${response.code}${reason?.let { ": $it" } ?: ""})."
+                    },
+                )
             }
             json.parseToJsonElement(text).jsonObject["client_id"]?.jsonPrimitive?.contentOrNull
                 ?: throw GroceryException("OurGroceries didn't return a client ID.")
