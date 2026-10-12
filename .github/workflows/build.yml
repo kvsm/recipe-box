@@ -1,0 +1,52 @@
+# Builds the app on GitHub's servers whenever the code changes, runs the tests,
+# and puts the installable APK on a "Latest build" release you can open on your phone.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Build APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Keep the APK with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: recipe-box-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish to the "Latest build" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk recipe-box.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest recipe-box.apk \
+            --title "Latest build" \
+            --notes "Built from ${GITHUB_SHA::7}. Open this page on your phone and tap recipe-box.apk to install." \
+            --prerelease
