@@ -108,7 +108,8 @@ class UnitsTest {
             "Cook for 2 minutes, then add 1 large egg.",
         )
         untouched.forEach { assertEquals(it, convertAmountsInText(it, metric)) }
-        assertEquals("Stir in 200g/7oz flour.", convertAmountsInText("Stir in 200g/7oz flour.", imperialUk))
+        // In UK imperial the recipe's own ounces come first.
+        assertEquals("Stir in 7oz/200g flour.", convertAmountsInText("Stir in 200g/7oz flour.", imperialUk))
     }
 
     @Test fun `method amounts follow the servings`() {
