@@ -1,5 +1,6 @@
 package app.recipebox.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
@@ -30,6 +31,7 @@ data class RecipeEntity(
     val prep: List<PrepTask>,
     val prepSource: String,
     val readBy: String,
+    @ColumnInfo(defaultValue = "[]") val countWords: List<String> = emptyList(),
     val notes: String?,
     val createdAt: Long,
     val updatedAt: Long,

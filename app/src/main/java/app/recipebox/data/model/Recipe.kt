@@ -80,6 +80,11 @@ data class Recipe(
     val prep: List<PrepTask> = emptyList(),
     val prepSource: PrepSource = PrepSource.NONE,
     val readBy: ReadBy = ReadBy.STRUCTURED,
+    /**
+     * Words the method uses to count an ingredient by another name, found by Claude on import:
+     * "yolks" when the list says eggs, "fillets" for salmon. Counts of these scale with the servings.
+     */
+    val countWords: List<String> = emptyList(),
     val notes: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,

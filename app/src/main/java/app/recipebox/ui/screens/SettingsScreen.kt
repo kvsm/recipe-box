@@ -261,6 +261,7 @@ fun SettingsScreen(
                             "reader" to "Captions and pages",
                             "screenshot" to "Screenshots",
                             "prep" to "Get ready",
+                            "counts" to "Counted ingredients",
                             "category" to "Shopping categories",
                         ).forEach { (area, label) ->
                             lessons[area]?.takeIf { it > 0 }?.let { n ->

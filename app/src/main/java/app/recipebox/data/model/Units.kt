@@ -322,19 +322,39 @@ private fun singularOf(word: String): String = when {
 }
 
 /**
- * The words that name a counted ingredient in this recipe, singular and plural: for "3 large eggs"
- * and "2 garlic cloves", {egg, eggs, garlic, clove, cloves, …}. Weighed and measured ingredients
- * are left out, since their amounts in the method carry a unit and are handled already.
+ * Other names a method commonly counts an ingredient by, built in so recipes read without
+ * Claude (and older imports) still scale them: eggs become "yolks" and "whites". Claude finds
+ * the rest on import ([Recipe.countWords]), and logs a "counts" lesson for any it finds that
+ * aren't here, so this list can grow.
  */
-fun countedIngredientWords(ingredients: List<Ingredient>): Set<String> = ingredients
-    .filter { it.quantity != null && (it.unit == null || it.unit.lowercase() !in textUnits) }
-    .flatMap { ing ->
-        val words = ing.name.lowercase().split(Regex("[^a-z-]+")).filter { it.length > 2 && it !in countFiller }
-        // The name's head word ("eggs" in "large free-range eggs"), any other naming words, and a counted unit ("cloves").
-        (words + listOfNotNull(ing.unit?.lowercase()?.substringAfterLast(' ')))
-    }
-    .flatMap { listOf(it, pluralOf(it), singularOf(it)) }
-    .toSet()
+val countAliases: Map<String, List<String>> = mapOf(
+    "egg" to listOf("yolk", "white"),
+    "chicken" to listOf("breast", "thigh", "leg", "drumstick", "fillet"),
+    "salmon" to listOf("fillet"), "cod" to listOf("fillet"), "haddock" to listOf("fillet"),
+    "hake" to listOf("fillet"), "fish" to listOf("fillet"),
+    "pork" to listOf("chop", "steak"), "lamb" to listOf("chop", "shank"), "beef" to listOf("steak"),
+    "bread" to listOf("slice"), "tortilla" to listOf("wrap"),
+)
+
+private fun nameWords(ing: Ingredient): List<String> =
+    ing.name.lowercase().split(Regex("[^a-z-]+")).filter { it.length > 2 && it !in countFiller }
+
+/**
+ * The words that name a counted ingredient in this recipe, singular and plural: for "3 large eggs"
+ * and "2 garlic cloves", {egg, eggs, yolk, yolks, white, whites, garlic, clove, cloves, …}.
+ * Weighed and measured ingredients only bring their built-in aliases ("500g chicken thighs" lets
+ * "4 thighs" scale) — not their own names, since their amounts in the method carry a unit.
+ */
+fun countedIngredientWords(ingredients: List<Ingredient>, extra: List<String> = emptyList()): Set<String> {
+    val withAmounts = ingredients.filter { it.quantity != null }
+    val counted = withAmounts.filter { it.unit == null || it.unit.lowercase() !in textUnits }
+    // The name's words ("eggs" in "large free-range eggs") and a counted unit ("cloves").
+    val own = counted.flatMap { nameWords(it) + listOfNotNull(it.unit?.lowercase()?.substringAfterLast(' ')) }
+    val aliases = withAmounts.flatMap(::nameWords).map(::singularOf).flatMap { countAliases[it].orEmpty() }
+    return (own + aliases + extra.map { it.lowercase().trim() }.filter { it.length > 2 })
+        .flatMap { listOf(it, pluralOf(it), singularOf(it)) }
+        .toSet()
+}
 
 private fun countPattern(words: Set<String>): Regex {
     val num = """(\d+(?:\.\d+)?[½¼¾⅓⅔]?|[½¼¾⅓⅔]|${numberWords.keys.joinToString("|")})"""
@@ -378,7 +398,7 @@ fun convertText(text: String, measures: Measures, factor: Double = 1.0, countedW
 
 /** The recipe's step and Get ready text, scaled and in [measures]' units. Ingredients are handled line by line instead. */
 fun Recipe.textIn(measures: Measures, factor: Double = 1.0): Recipe {
-    val counted = countedIngredientWords(ingredients)
+    val counted = countedIngredientWords(ingredients, countWords)
     fun convert(text: String) = convertText(text, measures, factor, counted)
     return copy(
         instructions = instructions.map { s -> s.copy(steps = s.steps.map(::convert)) },

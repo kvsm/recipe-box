@@ -20,6 +20,7 @@ On the phone: Settings → Lessons for no-key mode → Export lessons. You get `
 | `screenshot` | on-device text + reader | `importer/BuiltInReader.kt` (OCR quirks) |
 | `prep` | Get ready / heat-ups | `importer/PrepPlanner.kt` (`HeuristicPrep`) |
 | `category` | shopping category keywords | `groceries/CategoryMatcher.kt` (`KeywordCategories`) |
+| `counts` | words the method counts ingredients by ("yolks" for eggs) | `data/model/Units.kt` (`countAliases`) |
 
 `"source": "you"` means you fixed or filed it yourself. Treat those as ground truth.
 

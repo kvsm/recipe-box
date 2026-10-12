@@ -129,6 +129,20 @@ class UnitsTest {
         assertEquals("Cut into 4 pieces and fry 1 kg mince.", scaled("Cut into 4 pieces and fry 500g mince.", 2.0))
     }
 
+    @Test fun `counts under other names scale too`() {
+        // Built in: eggs bring yolks and whites; weighed chicken brings thighs.
+        val builtIn = countedIngredientWords(listOf("3 eggs", "500g chicken thighs").map(IngredientParser::parse))
+        assertEquals(
+            "Whisk 6 yolks, and brown the 8 thighs.",
+            convertText("Whisk 3 yolks, and brown the 4 thighs.", metric, 2.0, builtIn),
+        )
+        // Found by Claude on import: lamb counted as cutlets.
+        val withClaude = countedIngredientWords(listOf("800g lamb").map(IngredientParser::parse), extra = listOf("cutlets"))
+        assertEquals("Grill 8 cutlets.", convertText("Grill 4 cutlets.", metric, 2.0, withClaude))
+        // Weighed ingredients don't bring their own names: "2 lamb" isn't a count.
+        assertEquals("Season 2 lamb racks.", convertText("Season 2 lamb racks.", metric, 2.0, countedIngredientWords(listOf("800g lamb").map(IngredientParser::parse))))
+    }
+
     @Test fun `oven temperatures convert both ways and keep the original`() {
         assertEquals("Bake at 180°C (350°F) for 20 minutes", convertTemperatures("Bake at 350°F for 20 minutes", UnitSystem.METRIC))
         assertEquals("Bake at 180°C (350°F) for 20 minutes", convertTemperatures("Bake at 350°F for 20 minutes", UnitSystem.IMPERIAL_UK))

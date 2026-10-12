@@ -5,11 +5,13 @@ import app.recipebox.data.model.InstructionSection
 import app.recipebox.data.model.PrepSource
 import app.recipebox.data.model.PrepTask
 import app.recipebox.data.model.Recipe
+import app.recipebox.data.model.countedIngredientWords
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.booleanOrNull
@@ -112,8 +114,40 @@ class PrepPlanner(private val claude: ClaudeClient, private val gaps: LessonLog)
             recipe.ingredients
         }
 
+        // Words the method counts ingredients by ("yolks" for eggs), so those counts scale with the servings.
+        val countWords = result["count_words"]?.jsonArray.orEmpty().mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val word = o["word"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()?.takeIf { it.length > 2 && ' ' !in it }
+                ?: return@mapNotNull null
+            word to o["ingredient"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        }.distinctBy { it.first }.take(20)
+
         runCatching { recordPrepLessons(recipe, prep) }
-        return recipe.copy(prep = prep, instructions = method, ingredients = ingredients, prepSource = PrepSource.CLAUDE)
+        runCatching { recordCountLessons(ingredients, countWords) }
+        return recipe.copy(
+            prep = prep,
+            instructions = method,
+            ingredients = ingredients,
+            countWords = countWords.map { it.first },
+            prepSource = PrepSource.CLAUDE,
+        )
+    }
+
+    /** A counting word Claude found that the built-in words (names plus [countAliases]) wouldn't have caught. */
+    private fun recordCountLessons(ingredients: List<Ingredient>, found: List<Pair<String, String>>) {
+        val builtIn = countedIngredientWords(ingredients)
+        found.filter { (word, _) -> word !in builtIn }.forEach { (word, ingredient) ->
+            gaps.record(
+                "counts",
+                "$ingredient|$word",
+                buildJsonObject {
+                    put("ingredient", ingredient)
+                    put("ingredients", JsonArray(ingredients.map { JsonPrimitive(it.raw) }))
+                },
+                JsonArray(emptyList()),
+                JsonArray(listOf(JsonPrimitive(word))),
+            )
+        }
     }
 
     /**
@@ -186,6 +220,13 @@ class PrepPlanner(private val claude: ClaudeClient, private val gaps: LessonLog)
             for packs of a size write it like "x 400g tin". amount_text is for amounts in words with no number ("small pack",
             "knob", "to taste"). note holds everything else.
 
+            count_words: words the method uses to count one of the listed ingredients by a different name, where the count
+            should go up and down with the servings. For example "separate 3 eggs, then whisk the 3 yolks" (word "yolks",
+            ingredient "eggs"), or "lay the 4 fillets skin-side down" when the list says "600g salmon" (word "fillets",
+            ingredient "salmon"). Only list words that appear after a number in the method. Don't list the ingredient's own
+            name, units (g, cup, tbsp) or things that aren't ingredients (batches, pieces, portions, layers). Leave it empty
+            if there are none.
+
             Rules: never add ingredients, quantities, temperatures, times or techniques that aren't in the source. Never drop a step's
             content: every instruction in the source must end up in prep_tasks or method. Keep the source's wording where you can.
         """.trimIndent()
@@ -226,6 +267,17 @@ class PrepPlanner(private val claude: ClaudeClient, private val gaps: LessonLog)
                         "note": {"type": "string"}
                       },
                       "required": ["raw", "name"]
+                    }
+                  },
+                  "count_words": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "word": {"type": "string"},
+                        "ingredient": {"type": "string"}
+                      },
+                      "required": ["word", "ingredient"]
                     }
                   },
                   "method": {
