@@ -9,6 +9,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import app.recipebox.RecipeBoxApp
 import app.recipebox.data.model.Ingredient
+import app.recipebox.data.model.RawSnapshot
 import app.recipebox.data.model.Recipe
 import app.recipebox.groceries.GroceryItem
 import app.recipebox.groceries.GroceryRouter
@@ -32,6 +33,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+
+/** A recipe that's just been taken out of the tin, kept until its Undo runs out. */
+data class Removed(val recipe: Recipe, val raw: RawSnapshot?)
 
 /** An import that's still running, or failed and hasn't been dismissed. */
 data class ImportStatus(val id: UUID, val label: String, val failed: Boolean, val error: String?)
@@ -68,6 +72,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val messages: SharedFlow<String> = _messages
 
+    private val _removed = MutableSharedFlow<Removed>(extraBufferCapacity = 4)
+    /** Each removal, for the "Removed … Undo" snackbar. */
+    val removed: SharedFlow<Removed> = _removed
+
     private val _hasClaudeKey = MutableStateFlow(false)
     val hasClaudeKey = _hasClaudeKey.asStateFlow()
     private val _ourGroceriesConnected = MutableStateFlow(false)
@@ -79,6 +87,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         refreshStatus()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { container.photos.sweep(container.repository.all().mapNotNull { it.imageUrl }.toSet()) }
+        }
     }
 
     fun refreshStatus() {
@@ -136,12 +147,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Takes a recipe out of the tin. Its photo stays until the Undo runs out, in case it comes back. */
     fun delete(id: Long) {
-        viewModelScope.launch {
-            val photo = container.repository.all().firstOrNull { it.id == id }?.imageUrl
+        viewModelScope.launch(Dispatchers.IO) {
+            val recipe = container.repository.all().firstOrNull { it.id == id } ?: return@launch
+            val raw = container.repository.raw(id)
             container.repository.delete(id)
-            container.photos.delete(photo)
+            _removed.emit(Removed(recipe, raw))
         }
+    }
+
+    fun undoDelete(removed: Removed) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { container.repository.restore(removed.recipe, removed.raw) }
+                .onFailure { _messages.emit("Couldn't put ${removed.recipe.title} back") }
+        }
+    }
+
+    /** The Undo has gone: the photo can go too. */
+    fun forgetRemoved(removed: Removed) {
+        viewModelScope.launch(Dispatchers.IO) { container.photos.delete(removed.recipe.imageUrl) }
     }
 
     /** Sets a recipe's photo from a picked or freshly taken image, or removes it when [uri] is null. */

@@ -51,6 +51,17 @@ class RecipePhotos(private val context: Context, private val http: OkHttpClient)
         if (file.parentFile?.canonicalPath == dir.canonicalPath) file.delete()
     }
 
+    /**
+     * Deletes saved photos no recipe points at any more. Leaves anything from the last hour alone,
+     * so a photo for an import that's still being saved, or a removal that can still be undone, is safe.
+     */
+    fun sweep(inUse: Set<String>) {
+        val cutoff = System.currentTimeMillis() - 60 * 60 * 1000
+        dir.listFiles()?.forEach { file ->
+            if (file.lastModified() < cutoff && Uri.fromFile(file).toString() !in inUse) file.delete()
+        }
+    }
+
     /** A temporary file for the camera to write into. */
     fun newCameraFile(): File = File(File(context.cacheDir, "camera").apply { mkdirs() }, "${UUID.randomUUID()}.jpg")
 

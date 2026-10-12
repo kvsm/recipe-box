@@ -2,7 +2,9 @@ package app.recipebox.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +48,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -76,8 +80,10 @@ fun TinScreen(
     onSettings: () -> Unit,
     onImportUrl: (String) -> Unit,
     onDismissImports: () -> Unit,
+    onRemove: (Long) -> Unit,
     selectedId: Long? = null,
 ) {
+    var removing by remember { mutableStateOf<Recipe?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var divider by rememberSaveable { mutableStateOf<String?>(null) }
     var showAdd by rememberSaveable { mutableStateOf(false) }
@@ -167,6 +173,7 @@ fun TinScreen(
                         recipe,
                         Modifier.offset(y = if (shown.indexOf(recipe) % 2 == 1) 10.dp else 0.dp),
                         selected = recipe.id == selectedId,
+                        onLongClick = { removing = recipe },
                     ) {
                         onOpen(recipe.id)
                     }
@@ -192,6 +199,31 @@ fun TinScreen(
     if (showAdd) {
         AddLinkDialog(onDismiss = { showAdd = false }, onAdd = { onImportUrl(it); showAdd = false })
     }
+    removing?.let { recipe ->
+        RemoveRecipeDialog(recipe.title, onRemove = { removing = null; onRemove(recipe.id) }, onDismiss = { removing = null })
+    }
+}
+
+/** "Remove this recipe?" Used from a long-press in the tin and from the recipe card itself. */
+@Composable
+fun RemoveRecipeDialog(title: String, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Tin.Card,
+        title = { Text("Remove $title?", style = MaterialTheme.typography.headlineSmall) },
+        text = {
+            Text(
+                "It comes out of your tin, along with the saved copy of the original. You can undo it straight after.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = {
+            StickerButton(onClick = onRemove, fill = Tin.Stamp, contentColor = Tin.Card, minHeight = 48.dp) { Text("Remove") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Keep it", color = Tin.Ink, style = MaterialTheme.typography.titleMedium) }
+        },
+    )
 }
 
 @Composable
@@ -211,9 +243,17 @@ private fun DividerTab(label: String, colour: androidx.compose.ui.graphics.Color
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecipeCard(recipe: Recipe, modifier: Modifier = Modifier, selected: Boolean = false, onClick: () -> Unit) {
+private fun RecipeCard(
+    recipe: Recipe,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(14.dp)
+    val haptics = LocalHapticFeedback.current
     Column(
         modifier
             // The open card (tablet only) straightens up and wears a radish shadow.
@@ -222,7 +262,12 @@ private fun RecipeCard(recipe: Recipe, modifier: Modifier = Modifier, selected: 
             .clip(shape)
             .background(Tin.Card)
             .border(if (selected) 3.dp else 2.dp, Tin.Ink, shape)
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClickLabel = "Open",
+                onLongClickLabel = "Remove from the tin",
+                onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); onLongClick() },
+                onClick = onClick,
+            ),
     ) {
         Box(
             Modifier.fillMaxWidth().height(104.dp).background(Tin.headers[(recipe.id % Tin.headers.size).toInt()]),

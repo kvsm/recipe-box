@@ -29,6 +29,8 @@ import app.recipebox.ui.components.BowlArt
 import app.recipebox.ui.theme.Tin
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,6 +70,17 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
     val hasClaudeKey by vm.hasClaudeKey.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
+    LaunchedEffect(Unit) {
+        vm.removed.collect { removed ->
+            val result = snackbar.showSnackbar(
+                message = "Took ${removed.recipe.title} out of the tin",
+                actionLabel = "Undo",
+                withDismissAction = false,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) vm.undoDelete(removed) else vm.forgetRemoved(removed)
+        }
+    }
 
     val id = openId
     when {
@@ -106,6 +119,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                         onSettings = { settings = true },
                         onImportUrl = vm::importUrl,
                         onDismissImports = vm::dismissFinishedImports,
+                        onRemove = { removeId -> vm.delete(removeId); if (removeId == id) openId = null },
                         selectedId = id,
                     )
                 }
@@ -164,6 +178,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
             onSettings = { settings = true },
             onImportUrl = vm::importUrl,
             onDismissImports = vm::dismissFinishedImports,
+            onRemove = vm::delete,
         )
     }
 

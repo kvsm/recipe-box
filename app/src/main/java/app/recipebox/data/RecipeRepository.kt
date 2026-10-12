@@ -31,6 +31,14 @@ class RecipeRepository(private val dao: RecipeDao) {
 
     suspend fun delete(id: Long) = dao.delete(id)
 
+    /** Puts a removed recipe back with its original id, dates and saved source (for Undo). */
+    suspend fun restore(recipe: Recipe, raw: RawSnapshot?, rawImportedAt: Long = recipe.createdAt) {
+        val rawEntity = raw?.let {
+            RawSourceEntity(recipeId = recipe.id, sourceUrl = it.sourceUrl, kind = it.kind, payload = it.payload, importedAt = rawImportedAt)
+        }
+        dao.insertWithRaw(recipe.toEntity(), rawEntity)
+    }
+
     suspend fun raw(id: Long): RawSnapshot? = dao.getRaw(id)?.let { RawSnapshot(it.kind, it.payload, it.sourceUrl) }
 }
 

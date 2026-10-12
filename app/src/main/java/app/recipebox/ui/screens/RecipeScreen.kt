@@ -481,20 +481,7 @@ fun RecipeScreen(
     }
 
     if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            containerColor = Tin.Card,
-            title = { Text("Remove ${recipe.title}?", style = MaterialTheme.typography.headlineSmall) },
-            text = { Text("It comes out of your tin for good, along with the saved copy of the original.", style = MaterialTheme.typography.bodyMedium) },
-            confirmButton = {
-                StickerButton(onClick = { confirmDelete = false; onDelete() }, fill = Tin.Stamp, contentColor = Tin.Card, minHeight = 48.dp) {
-                    Text("Remove")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Keep it", color = Tin.Ink, style = MaterialTheme.typography.titleMedium) }
-            },
-        )
+        RemoveRecipeDialog(recipe.title, onRemove = { confirmDelete = false; onDelete() }, onDismiss = { confirmDelete = false })
     }
 }
 
