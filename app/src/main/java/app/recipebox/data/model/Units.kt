@@ -196,7 +196,22 @@ fun formatAmount(c: Converted): String {
 
 // ---------- Amounts and temperatures in method text ----------
 
-private const val NUM = """(?:\d+\s+\d+/\d+|\d+/\d+|\d+(?:\.\d+)?[½¼¾⅓⅔]?|[½¼¾⅓⅔])"""
+/**
+ * A number as recipes write it: "2", "1.5", "1/2", "1 1/2", "1½", "1 ½", "½", and in words
+ * "a", "an", "half a", "one" to "twelve" (words only when a space follows, so "again" isn't "a g").
+ */
+private const val NUM = """(?:\d+\s+\d+/\d+|\d+\s+[½¼¾⅓⅔]|\d+/\d+|\d+(?:\.\d+)?[½¼¾⅓⅔]?|[½¼¾⅓⅔]|""" +
+    """(?:half(?:\s+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?=\s))"""
+
+/** Reads a [NUM] match: digits, fractions or words. */
+private fun readNumber(text: String): Double? {
+    val t = text.trim().lowercase()
+    return when {
+        t == "a" || t == "an" -> 1.0
+        t.startsWith("half") -> 0.5
+        else -> numberWords[t] ?: parseAmountNumber(t)
+    }
+}
 
 private val textUnits = mapOf(
     "g" to "g", "gram" to "g", "grams" to "g", "kg" to "kg", "kilo" to "kg", "kilos" to "kg", "kilogram" to "kg", "kilograms" to "kg",
@@ -226,27 +241,76 @@ private val textAmount = Regex(
  * are scaled but not converted again, so the recipe's own conversions aren't doubled up.
  * Bare counts ("3 eggs") are left alone: in a method they're as often pieces or batches.
  */
-fun convertAmountsInText(text: String, measures: Measures, factor: Double = 1.0): String = textAmount.replace(text) { m ->
-    val low = parseAmountNumber(m.groupValues[1])?.times(factor) ?: return@replace m.value
-    val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { (parseAmountNumber(it) ?: return@replace m.value) * factor }
-    val rawUnit = m.groupValues[3].lowercase()
-    val unit = if (rawUnit.startsWith("fl")) "fl oz" else textUnits[rawUnit] ?: return@replace m.value
+fun convertAmountsInText(text: String, measures: Measures, factor: Double = 1.0): String {
+    val prepared = preferTargetInPairs(text, measures)
+    return textAmount.replace(prepared) { m -> convertOne(m, prepared, measures, factor) }
+}
+
+private fun convertOne(m: MatchResult, text: CharSequence, measures: Measures, factor: Double): String {
+    val low = readNumber(m.groupValues[1])?.times(factor) ?: return m.value
+    val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { (readNumber(it) ?: return m.value) * factor }
+    val unit = unitOf(m.groupValues[3]) ?: return m.value
     // The amount as written, scaled: what goes in brackets, or on its own if there's nothing to convert.
     val original = if (factor == 1.0) m.value.trim() else formatAmount(tidy(low, high, unit))
     if (!pairedWithConversion(text, m.range)) {
-        // What's being measured, for cups of flour vs cups of milk: the next few words, up to any punctuation.
-        val what = text.substring(m.range.last + 1).split(',', '.', ';', ':', '(').first()
-            .trim().split(Regex("\\s+")).take(4).joinToString(" ")
-        convertAmount(low, high, unit, what, measures)?.let { return@replace "${formatAmount(it)} ($original)" }
+        convertAmount(low, high, unit, wordsAfter(text, m.range), measures)?.let { return "${formatAmount(it)} ($original)" }
     }
-    original
+    return original
 }
 
+private fun unitOf(written: String): String? {
+    val u = written.lowercase()
+    return if (u.startsWith("fl")) "fl oz" else textUnits[u]
+}
+
+/** What's being measured, for cups of flour vs cups of milk: the next few words, up to any punctuation. */
+private fun wordsAfter(text: CharSequence, range: IntRange): String =
+    text.substring(range.last + 1).split(',', '.', ';', ':', '(').first()
+        .trim().split(Regex("\\s+")).take(4).joinToString(" ")
+
 /** True for either half of "200g (7oz)" or "200g/7oz". */
-private fun pairedWithConversion(text: String, range: IntRange): Boolean {
+private fun pairedWithConversion(text: CharSequence, range: IntRange): Boolean {
     val before = text.substring(0, range.first).trimEnd().lastOrNull()
     val after = text.substring(range.last + 1).trimStart().firstOrNull()
     return before == '(' || before == '/' || after == '(' || after == '/'
+}
+
+/** Whether [unit] already belongs to the system being shown. Spoons belong to none: they're never swapped in. */
+private fun inSystem(unit: String, measures: Measures): Boolean = when (measures.system) {
+    UnitSystem.METRIC -> unit in setOf("g", "kg", "ml", "l")
+    UnitSystem.IMPERIAL_UK -> unit in setOf("oz", "lb") || (unit in britishOrAmericanVolumes && measures.britishVolumes)
+    UnitSystem.IMPERIAL_US -> unit in setOf("oz", "lb", "cup", "stick") || (unit in britishOrAmericanVolumes && !measures.britishVolumes)
+}
+
+private val textAmountPair by lazy {
+    val one = textAmount.pattern.removePrefix("(?<![\\w.])")
+    Regex("""(?<![\w.])($one)\s*(\(\s*|/\s*)($one)(\s*\))?""", RegexOption.IGNORE_CASE)
+}
+
+/**
+ * Where the recipe gives an amount both ways, puts the one in the chosen system first:
+ * in metric, "1 cup (240ml) milk" reads "240ml (1 cup) milk". If neither side is in the
+ * chosen system ("1 cup (240ml)" for UK imperial), the first is converted and the second dropped.
+ */
+private fun preferTargetInPairs(text: String, measures: Measures): String = textAmountPair.replace(text) { m ->
+    val first = textAmount.matchEntire(m.groupValues[1]) ?: return@replace m.value
+    // Groups: 1 = first amount (2–4 inside it), 5 = "(" or "/", 6 = second amount (7–9 inside), 10 = ")".
+    val second = textAmount.matchEntire(m.groupValues[6]) ?: return@replace m.value
+    val firstUnit = unitOf(first.groupValues[3]) ?: return@replace m.value
+    val secondUnit = unitOf(second.groupValues[3]) ?: return@replace m.value
+    val bracketed = m.groupValues[5].trim().startsWith("(")
+    fun join(a: String, b: String) = if (bracketed) "$a ($b)" else "$a/$b"
+    when {
+        inSystem(firstUnit, measures) -> m.value
+        inSystem(secondUnit, measures) -> join(second.value.trim(), first.value.trim())
+        else -> {
+            val low = readNumber(first.groupValues[1]) ?: return@replace m.value
+            val high = first.groupValues[2].takeIf { it.isNotEmpty() }?.let { readNumber(it) ?: return@replace m.value }
+            val after = IntRange(m.range.last, m.range.last)
+            convertAmount(low, high, firstUnit, wordsAfter(text, after), measures)
+                ?.let { join(formatAmount(it), first.value.trim()) } ?: m.value
+        }
+    }
 }
 
 /** A scaled amount rounded the way its unit is usually written. */

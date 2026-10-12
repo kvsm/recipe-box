@@ -85,6 +85,21 @@ class UnitsTest {
         assertEquals("Brown 450–910 g (1-2 lb) of beef.", convertAmountsInText("Brown 1-2 lb of beef.", metric))
     }
 
+    @Test fun `amounts written in words, with spaced fractions, or in pairs`() {
+        assertEquals("Melt 230 g (a cup) of butter.", convertAmountsInText("Melt a cup of butter.", metric))
+        assertEquals("Whisk in 120 ml (half a cup) of milk.", convertAmountsInText("Whisk in half a cup of milk.", metric))
+        assertEquals("Add 360 ml (1 ½ cups) milk.", convertAmountsInText("Add 1 ½ cups milk.", metric))
+        // The chosen system goes first when the recipe gives both.
+        assertEquals("Measure out 240ml (1 cup) milk.", convertAmountsInText("Measure out 1 cup (240ml) milk.", metric))
+        assertEquals("Measure out 240ml (1 cup) milk.", convertAmountsInText("Measure out 240ml (1 cup) milk.", metric))
+        assertEquals("Measure out 1 cup (240ml) milk.", convertAmountsInText("Measure out 1 cup (240ml) milk.", imperialUs))
+        // Neither side is UK imperial: the first is converted, the second dropped.
+        assertEquals("Measure out 8 fl oz (1 cup) milk.", convertAmountsInText("Measure out 1 cup (240ml) milk.", imperialUk))
+        // Words that merely start like units are left alone.
+        val untouched = "Stir again, also add a little salt and an onion."
+        assertEquals(untouched, convertAmountsInText(untouched, metric))
+    }
+
     @Test fun `text leaves spoons, words and existing conversions alone`() {
         val untouched = listOf(
             "Add 2 tbsp oil and 3 garlic cloves.",
