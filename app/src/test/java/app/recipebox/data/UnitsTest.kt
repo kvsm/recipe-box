@@ -95,7 +95,7 @@ class UnitsTest {
         assertEquals("Measure out 1 cup (240ml) milk.", convertAmountsInText("Measure out 1 cup (240ml) milk.", imperialUs))
         // Neither side is UK imperial: the first is converted, the second dropped.
         assertEquals("Measure out 8 fl oz (1 cup) milk.", convertAmountsInText("Measure out 1 cup (240ml) milk.", imperialUk))
-        // Words that merely start like units are left alone.
+        // Words that merely start like units aren't units. ("an onion" is a count, scaled elsewhere.)
         val untouched = "Stir again, also add a little salt and an onion."
         assertEquals(untouched, convertAmountsInText(untouched, metric))
     }
@@ -140,6 +140,10 @@ class UnitsTest {
             scaled("Crack in 3 eggs, add 1 onion and 2 garlic cloves, then cook in 2 batches.", 2.0),
         )
         assertEquals("Beat 6 large eggs.", scaled("Beat three large eggs.", 2.0))
+        assertEquals("Add 2 onions and 1 lemon.", scaled("Add an onion and half a lemon.", 2.0))
+        assertEquals("Add ½ onion.", scaled("Add an onion.", 0.5))
+        // "a" before something that isn't an ingredient stays put.
+        assertEquals("Add a pinch of salt and fry for a minute.", scaled("Add a pinch of salt and fry for a minute.", 2.0))
         assertEquals("Squeeze in the juice of 1 lemon.", scaled("Squeeze in the juice of 2 lemons.", 0.5))
         // Doubled 500g reads as 1 kg, and "4 pieces" isn't an ingredient so stays put.
         assertEquals("Cut into 4 pieces and fry 1 kg mince.", scaled("Cut into 4 pieces and fry 500g mince.", 2.0))

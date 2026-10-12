@@ -421,7 +421,8 @@ fun countedIngredientWords(ingredients: List<Ingredient>, extra: List<String> = 
 }
 
 private fun countPattern(words: Set<String>): Regex {
-    val num = """(\d+(?:\.\d+)?[½¼¾⅓⅔]?|[½¼¾⅓⅔]|${numberWords.keys.joinToString("|")})"""
+    // "an onion" and "half a lemon" are counts too.
+    val num = """(\d+(?:\.\d+)?[½¼¾⅓⅔]?|[½¼¾⅓⅔]|half\s+an?|an?|${numberWords.keys.joinToString("|")})"""
     val filler = (countFiller + words).sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
     val target = words.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) }
     return Regex(
@@ -438,9 +439,8 @@ private fun countPattern(words: Set<String>): Regex {
 fun scaleCountsInText(text: String, countedWords: Set<String>, factor: Double): String {
     if (factor == 1.0 || countedWords.isEmpty()) return text
     return countPattern(countedWords).replace(text) { m ->
-        fun read(s: String) = numberWords[s.lowercase()] ?: parseAmountNumber(s)
-        val low = read(m.groupValues[1]) ?: return@replace m.value
-        val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { read(it) ?: return@replace m.value }
+        val low = readNumber(m.groupValues[1]) ?: return@replace m.value
+        val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { readNumber(it) ?: return@replace m.value }
         val newLow = low * factor
         val newHigh = high?.times(factor)
         val top = newHigh ?: newLow
