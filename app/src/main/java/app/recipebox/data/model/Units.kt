@@ -535,6 +535,12 @@ private fun Ingredient.lineWithUnit(factor: Double, measures: Measures?): Any? {
     return LineParts(m.groupValues[1], formatAmount(converted ?: tidy(low, high, unit)), rest)
 }
 
+/** Words that count a portion of an ingredient, which take the plural rather than the ingredient itself. */
+private val measuringWords = listOf(
+    "pinch", "handful", "knob", "clove", "tin", "can", "slice", "sprig", "rasher", "bunch", "stick",
+    "pack", "packet", "bag", "jar", "sachet", "head", "bulb", "sheet", "cube", "piece",
+)
+
 /** "2 medium onions" doubled → "4 medium onions"; "1 onion" → "2 onions". A bare count at the start, scaled. */
 private fun Ingredient.lineWithCount(factor: Double): Any? {
     val m = leadingCount.find(raw) ?: return null
@@ -550,7 +556,8 @@ private fun Ingredient.lineWithCount(factor: Double): Any? {
     val was = high ?: low
     val now = newHigh ?: newLow
     if ((was <= 1.0) != (now <= 1.0)) {
-        val candidates = listOfNotNull(unit?.substringAfterLast(' ')) + nameWords(this).map(::singularOf)
+        // Measuring words come first: "a pinch of salt" becomes "2 pinches of salt", not "2 pinch of salts".
+        val candidates = listOfNotNull(unit?.substringAfterLast(' ')) + measuringWords + nameWords(this).map(::singularOf)
         for (word in candidates) {
             val form = if (now > 1.0) singularOf(word) else pluralOf(word)
             val hit = Regex("""\b${Regex.escape(form)}\b""", RegexOption.IGNORE_CASE).find(rest) ?: continue
