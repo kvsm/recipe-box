@@ -1,0 +1,35 @@
+name: OurGroceries probe
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Try registrations
+        run: |
+          base=https://www.ourgroceries.com
+          {
+            echo "== metadata"; curl -sS $base/.well-known/oauth-authorization-server; echo
+            for uri in \
+              "app.recipebox:/oauth/ourgroceries" \
+              "app.recipebox://oauth/ourgroceries" \
+              "http://127.0.0.1/callback" \
+              "http://localhost/callback" \
+              "https://kvsm.github.io/recipe-box/oauth" \
+              "https://claude.ai/api/mcp/auth_callback"; do
+              echo; echo "== $uri"
+              curl -sS -w "\nHTTP %{http_code}\n" -X POST $base/oauth2/register \
+                -H 'Content-Type: application/json' \
+                -d "{\"client_name\":\"Recipe Box probe\",\"redirect_uris\":[\"$uri\"],\"grant_types\":[\"authorization_code\"],\"response_types\":[\"code\"],\"token_endpoint_auth_method\":\"none\"}"
+            done
+          } > probe.txt 2>&1
+          cat probe.txt
+      - name: Share result
+        if: always()
+        run: |
+          git config user.name ci; git config user.email ci@example.com
+          cp probe.txt /tmp/probe.txt
+          git checkout --orphan og-probe; git rm -rfq .; cp /tmp/probe.txt .
+          git add probe.txt; git commit -qm probe; git push -f origin og-probe
