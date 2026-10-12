@@ -252,11 +252,14 @@ fun RecipeScreen(
                                 } else if (q == null || factor == 1.0) {
                                     append(ingredient.raw)
                                 } else {
-                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                                    val max = ingredient.quantityMax
+                                    val unit = ingredient.unit
+                                    val amount = buildString {
                                         append(formatQuantity(q * factor))
-                                        ingredient.quantityMax?.let { append("–" + formatQuantity(it * factor)) }
-                                        ingredient.unit?.let { append(" " + pluralUnit(it, (ingredient.quantityMax ?: q) * factor)) }
+                                        if (max != null) append("–" + formatQuantity(max * factor))
+                                        if (unit != null) append(" " + pluralUnit(unit, (max ?: q) * factor))
                                     }
+                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(amount) }
                                     append(" ${ingredient.name}")
                                     ingredient.note?.let { append(", $it") }
                                 }
