@@ -19,7 +19,7 @@ class GroceryRouter(
     private val secrets: SecretStore,
 ) {
     sealed interface Outcome {
-        data class Added(val count: Int, val listName: String) : Outcome
+        data class Added(val count: Int, val listName: String, val createdList: Boolean) : Outcome
         data class Copied(val count: Int, val openedApp: Boolean) : Outcome
         /** Signed in, but the direct add didn't work. Nothing has been copied or opened. */
         data class Failed(val reason: String) : Outcome
@@ -32,7 +32,7 @@ class GroceryRouter(
     suspend fun send(items: List<GroceryItem>): Outcome {
         if (!ourGroceries.isConnected()) return copyAndOpen(items)
         return try {
-            Outcome.Added(ourGroceries.addItems(items, listName), listName)
+            ourGroceries.addItems(items, listName).let { Outcome.Added(it.count, listName, it.createdList) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

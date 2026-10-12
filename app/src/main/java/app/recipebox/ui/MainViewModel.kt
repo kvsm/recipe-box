@@ -204,8 +204,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             when (val outcome = container.groceries.send(items)) {
                 is GroceryRouter.Outcome.Added -> _messages.emit(
-                    if (outcome.count == items.size) "Added ${outcome.count} to ${outcome.listName}"
-                    else "Added ${outcome.count} of ${items.size} to ${outcome.listName}",
+                    (if (outcome.count == items.size) "Added ${outcome.count} to ${outcome.listName}"
+                    else "Added ${outcome.count} of ${items.size} to ${outcome.listName}") +
+                        if (outcome.createdList) " (a new list in OurGroceries)" else "",
                 )
                 is GroceryRouter.Outcome.Copied -> _messages.emit(copiedMessage(outcome))
                 is GroceryRouter.Outcome.Failed -> _groceryFailure.value = GroceryFailure(outcome.reason, items)

@@ -80,18 +80,29 @@ class OurGroceriesClient(
     /**
      * Adds [items] to the shopping list called [listName] (matched case-insensitively),
      * each in the category the user has used for it before where possible.
-     * Returns how many were added.
+     * If there's no such list yet, it's created first.
      */
-    suspend fun addItems(items: List<GroceryItem>, listName: String): Int = withContext(Dispatchers.IO) {
-        if (items.isEmpty()) return@withContext 0
+    suspend fun addItems(items: List<GroceryItem>, listName: String): AddResult = withContext(Dispatchers.IO) {
+        val name = listName.trim()
+        if (items.isEmpty()) return@withContext AddResult(0, createdList = false)
 
-        val overview = step("Reading your lists") { command("getOverview") }
-        val shopping = overview.lists("shoppingLists")
+        var overview = step("Reading your lists") { command("getOverview") }
+        var shopping = overview.lists("shoppingLists")
         val recipes = overview.lists("recipes")
-        val target = shopping.firstOrNull { it.name.equals(listName.trim(), ignoreCase = true) }
-            ?: throw GroceryException(
-                "There's no OurGroceries list called \"$listName\". Your lists: " + shopping.joinToString { it.name },
-            )
+        fun find() = shopping.firstOrNull { it.name.equals(name, ignoreCase = true) }
+        var target = find()
+        val created = target == null
+        if (target == null) {
+            step("Creating the \"$name\" list") {
+                command("createList", mapOf("name" to JsonPrimitive(name), "listType" to JsonPrimitive("SHOPPING")))
+                    .string("error")?.let { throw GroceryException("OurGroceries said \"$it\"") }
+                // Read the lists again for the new one's ID, rather than relying on createList's reply.
+                overview = command("getOverview")
+                shopping = overview.lists("shoppingLists")
+                target = find() ?: throw GroceryException("OurGroceries didn't show the new list afterwards.")
+            }
+        }
+        val list = target!!
 
         // The user's own categories, by name → id.
         val categoryIds = step("Reading your categories") {
@@ -102,12 +113,12 @@ class OurGroceriesClient(
             }.orEmpty()
         }
 
-        val history = categoryHistory(target, shopping, recipes, categoryIds.entries.associate { (name, id) -> id to name })
+        val history = categoryHistory(list, shopping, recipes, categoryIds.entries.associate { (name, id) -> id to name })
         val assigned = step("Picking categories") { categories.assign(items, categoryIds.keys.toList(), history) }
 
         val reply = step("Adding the items") { command("insertItems", mapOf("items" to JsonArray(items.map { item ->
             buildJsonObject {
-                put("listId", target.id)
+                put("listId", list.id)
                 // OurGroceries' convention is lower case except proper nouns.
                 put("value", item.name.replaceFirstChar { it.lowercase() })
                 item.note?.takeIf { it.isNotBlank() }?.let { put("note", it) }
@@ -117,8 +128,10 @@ class OurGroceriesClient(
         }))) }
         // The website API answers errors in JSON too, rather than with an HTTP error.
         reply.string("error")?.let { throw GroceryException("Adding the items: OurGroceries said \"$it\"") }
-        items.size
+        AddResult(items.size, createdList = created)
     }
+
+    data class AddResult(val count: Int, val createdList: Boolean)
 
     /** Runs one stage of adding, labelling any failure with the stage, so a problem can be pinned down. */
     private inline fun <T> step(label: String, block: () -> T): T = try {
