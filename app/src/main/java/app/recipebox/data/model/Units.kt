@@ -494,55 +494,69 @@ private val leadingCount = Regex("""^(\s*)($NUM)(?:\s*(?:-|–|to)\s*($NUM))?(?=
  * Lines the user corrected by hand show their correction, built from its parts.
  */
 fun Ingredient.scaledLine(factor: Double = 1.0, measures: Measures? = null): LineParts? {
-    if (edited) {
-        val shown = forCard(factor, measures) ?: return null
-        val amount = shown.amountLabel()?.ifBlank { null }
-        return LineParts("", amount.orEmpty(), (if (amount != null) " " else "") + shown.name + (shown.note?.let { ", $it" } ?: ""))
-    }
-
-    leadingAmountWithUnit.find(raw)?.let { m ->
-        val unit = unitOf(m.groupValues[4]) ?: return@let
-        val amountRange = m.groups[2]!!.range.first..m.range.last
-        // The recipe gives it both ways ("250g/9oz plain flour"): scale both sides, chosen system first.
-        if (pairedWithConversion(raw, amountRange)) {
-            val out = convertAmountsInText(raw, measures ?: return@let, factor)
-            return if (out == raw) null else LineParts("", "", out)
+    if (edited) return rebuilt(factor, measures)
+    return when (val withUnit = lineWithUnit(factor, measures)) {
+        is LineParts -> withUnit
+        Unchanged -> null
+        else -> when (val counted = lineWithCount(factor)) {
+            is LineParts -> counted
+            Unchanged -> null
+            // The amount isn't at the start ("juice of 2 lemons"): rebuild the line from its parts.
+            else -> rebuilt(factor, measures)
         }
-        val low = readNumber(m.groupValues[2])?.times(factor) ?: return@let
-        val high = m.groupValues[3].takeIf { it.isNotEmpty() }?.let { (readNumber(it) ?: return@let) * factor }
-        val rest = raw.substring(m.range.last + 1)
-        val converted = measures?.let { convertAmount(low, high, unit, rest, it) }
-        if (converted == null && factor == 1.0) return null
-        return LineParts(m.groupValues[1], formatAmount(converted ?: tidy(low, high, unit)), rest)
     }
+}
 
-    leadingCount.find(raw)?.let { m ->
-        if (factor == 1.0) return null
-        val low = readNumber(m.groupValues[2]) ?: return@let
-        val high = m.groupValues[3].takeIf { it.isNotEmpty() }?.let { readNumber(it) ?: return@let }
-        val newLow = low * factor
-        val newHigh = high?.times(factor)
-        val amount = formatQuantity(newLow) + (newHigh?.let { "–" + formatQuantity(it) } ?: "")
-        var rest = raw.substring(m.range.last + 1)
-        // "1 onion" doubled is "2 onions"; "2 eggs" halved is "1 egg". Fix the first word that names
-        // what's counted: the unit ("pinch", "clove") if there is one, else the ingredient itself.
-        val was = high ?: low
-        val now = newHigh ?: newLow
-        if ((was <= 1.0) != (now <= 1.0)) {
-            val candidates = listOfNotNull(unit?.substringAfterLast(' ')) + nameWords(this).map(::singularOf)
-            for (word in candidates) {
-                val form = if (now > 1.0) singularOf(word) else pluralOf(word)
-                val hit = Regex("""\b${Regex.escape(form)}\b""", RegexOption.IGNORE_CASE).find(rest) ?: continue
-                val replacement = if (now > 1.0) pluralOf(hit.value) else singularOf(hit.value)
-                rest = rest.replaceRange(hit.range, replacement)
-                break
-            }
-        }
-        return LineParts(m.groupValues[1], amount, rest)
-    }
+/** A line that matched but needs no change. (Null from the helpers below means "not this kind of line".) */
+private object Unchanged
 
-    // The amount isn't at the start ("juice of 2 lemons"): rebuild the line from its parts.
+/** The line built from its parts: how corrected lines, and lines with the amount mid-way, are shown. */
+private fun Ingredient.rebuilt(factor: Double, measures: Measures?): LineParts? {
     val shown = forCard(factor, measures) ?: return null
     val amount = shown.amountLabel()?.ifBlank { null }
     return LineParts("", amount.orEmpty(), (if (amount != null) " " else "") + shown.name + (shown.note?.let { ", $it" } ?: ""))
+}
+
+/** "1 lb beef mince" → "450 g beef mince": an amount with a unit at the start, scaled and converted. */
+private fun Ingredient.lineWithUnit(factor: Double, measures: Measures?): Any? {
+    val m = leadingAmountWithUnit.find(raw) ?: return null
+    val unit = unitOf(m.groupValues[4]) ?: return null
+    val amountRange = m.groups[2]!!.range.first..m.range.last
+    // The recipe gives it both ways ("250g/9oz plain flour"): scale both sides, chosen system first.
+    if (pairedWithConversion(raw, amountRange)) {
+        val out = convertAmountsInText(raw, measures ?: return null, factor)
+        return if (out == raw) Unchanged else LineParts("", "", out)
+    }
+    val low = (readNumber(m.groupValues[2]) ?: return null) * factor
+    val high = m.groupValues[3].takeIf { it.isNotEmpty() }?.let { readNumber(it) ?: return null }?.times(factor)
+    val rest = raw.substring(m.range.last + 1)
+    val converted = measures?.let { convertAmount(low, high, unit, rest, it) }
+    if (converted == null && factor == 1.0) return Unchanged
+    return LineParts(m.groupValues[1], formatAmount(converted ?: tidy(low, high, unit)), rest)
+}
+
+/** "2 medium onions" doubled → "4 medium onions"; "1 onion" → "2 onions". A bare count at the start, scaled. */
+private fun Ingredient.lineWithCount(factor: Double): Any? {
+    val m = leadingCount.find(raw) ?: return null
+    if (factor == 1.0) return Unchanged
+    val low = readNumber(m.groupValues[2]) ?: return null
+    val high = m.groupValues[3].takeIf { it.isNotEmpty() }?.let { readNumber(it) ?: return null }
+    val newLow = low * factor
+    val newHigh = high?.times(factor)
+    val amount = formatQuantity(newLow) + (newHigh?.let { "–" + formatQuantity(it) } ?: "")
+    var rest = raw.substring(m.range.last + 1)
+    // "1 onion" doubled is "2 onions"; "2 eggs" halved is "1 egg". Fix the first word that names
+    // what's counted: the unit ("pinch", "clove") if there is one, else the ingredient itself.
+    val was = high ?: low
+    val now = newHigh ?: newLow
+    if ((was <= 1.0) != (now <= 1.0)) {
+        val candidates = listOfNotNull(unit?.substringAfterLast(' ')) + nameWords(this).map(::singularOf)
+        for (word in candidates) {
+            val form = if (now > 1.0) singularOf(word) else pluralOf(word)
+            val hit = Regex("""\b${Regex.escape(form)}\b""", RegexOption.IGNORE_CASE).find(rest) ?: continue
+            rest = rest.replaceRange(hit.range, if (now > 1.0) pluralOf(hit.value) else singularOf(hit.value))
+            break
+        }
+    }
+    return LineParts(m.groupValues[1], amount, rest)
 }
