@@ -80,6 +80,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val hasClaudeKey = _hasClaudeKey.asStateFlow()
     private val _ourGroceriesConnected = MutableStateFlow(false)
     val ourGroceriesConnected = _ourGroceriesConnected.asStateFlow()
+    private val _ourGroceriesEmail = MutableStateFlow<String?>(null)
+    val ourGroceriesEmail = _ourGroceriesEmail.asStateFlow()
     private val _listName = MutableStateFlow(GroceryRouter.DEFAULT_LIST)
     val listName = _listName.asStateFlow()
     private val _lessons = MutableStateFlow<Map<String, Int>>(emptyMap())
@@ -96,6 +98,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             _hasClaudeKey.value = container.claude.hasKey()
             _ourGroceriesConnected.value = container.ourGroceries.isConnected()
+            _ourGroceriesEmail.value = container.ourGroceries.connectedEmail()
             _listName.value = container.groceries.listName
             _lessons.value = container.lessons.countsByArea()
         }
@@ -216,15 +219,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Returns the OurGroceries sign-in page to open, or null if it couldn't start. */
-    suspend fun ourGroceriesSignInUrl(): Uri? = runCatching { container.ourGroceries.beginSignIn() }
-        .onFailure { _messages.emit(it.message ?: "Couldn't start OurGroceries sign-in.") }
-        .getOrNull()
+    /** Signs in to OurGroceries. Returns true if it worked, so the form can clear itself. */
+    suspend fun signInToOurGroceries(email: String, password: String): Boolean =
+        withContext(Dispatchers.IO) { runCatching { container.ourGroceries.signIn(email, password) } }
+            .onSuccess {
+                _ourGroceriesConnected.value = true
+                _ourGroceriesEmail.value = container.ourGroceries.connectedEmail()
+                _messages.emit("OurGroceries connected")
+            }
+            .onFailure { _messages.emit(it.message ?: "Couldn't sign in to OurGroceries.") }
+            .isSuccess
 
     fun disconnectOurGroceries() {
         viewModelScope.launch(Dispatchers.IO) {
             container.ourGroceries.signOut()
             _ourGroceriesConnected.value = false
+            _ourGroceriesEmail.value = null
             _messages.emit("OurGroceries disconnected")
         }
     }

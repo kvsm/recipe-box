@@ -47,12 +47,11 @@ Temporary Claude problems (network, busy) retry first; on the last try the impor
 
 ## OurGroceries
 
-The app is its own MCP client for OurGroceries' official, experimental MCP server at `https://www.ourgroceries.com/mcp`.
+The app uses the API behind the OurGroceries website, as OurGroceries support recommended: their MCP server's tools can change at any time, which agents cope with and a compiled app doesn't. The client is a Kotlin port of the MIT-licensed [py-our-groceries](https://github.com/ljmerza/py-our-groceries) (the library Home Assistant uses). It's unofficial, so it may need fixing if OurGroceries changes its site.
 
-- **Sign-in:** dynamic client registration, then OAuth authorization code with PKCE in a Custom Tab. The redirect is `app.recipebox:/oauth/ourgroceries`. Only the access token is stored, encrypted.
-- **Adding items:** `initialize`, then `get_lists` (finds the list ID for the name set in Settings, default "Shopping"), then one `edit_items` batch of `add` operations. Each ingredient goes in as the item name, with the scaled quantity as its note.
-- **Fallback:** if it isn't connected or a call fails, items are copied to the clipboard and OurGroceries is opened.
-- **Needs OurGroceries' approval:** their registration endpoint only accepts client names it knows, and refuses "Recipe Box" with `invalid_client_metadata: Unknown client_name`. Until they allow it (custom-scheme redirect `app.recipebox:/oauth/ourgroceries`, or a client ID metadata document, which their server also supports), Connect fails with that explanation and Add to list uses the clipboard fallback.
+- **Sign-in:** email and password in Settings. There's no OAuth, so both are stored encrypted (Tink + Android Keystore) to sign in again when the session cookie expires, and only ever sent to ourgroceries.com.
+- **Adding items:** `getOverview` finds the list by name (default "Shopping"). The account's category list and every list's items, including crossed-off history, give the categories you actually use. Then one `insertItems` call adds everything, each with a `categoryId` where one matched and the scaled quantity as its note. Items with no match are left for OurGroceries to file itself.
+- **Fallback:** if you're not signed in or a call fails, items are copied to the clipboard.
 
 ## Code map
 

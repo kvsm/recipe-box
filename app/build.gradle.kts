@@ -113,7 +113,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
     implementation(libs.tink.android)
-    implementation(libs.androidx.browser)
     // On-device text recognition for screenshots when there's no Claude key (bundled model, works offline).
     implementation(libs.mlkit.text.recognition)
 

@@ -86,17 +86,19 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
     when {
         settings -> {
             val ogConnected by vm.ourGroceriesConnected.collectAsStateWithLifecycle()
+            val ogEmail by vm.ourGroceriesEmail.collectAsStateWithLifecycle()
             val listName by vm.listName.collectAsStateWithLifecycle()
             val lessons by vm.lessons.collectAsStateWithLifecycle()
             SettingsScreen(
                 hasClaudeKey = hasClaudeKey,
                 ourGroceriesConnected = ogConnected,
+                ourGroceriesEmail = ogEmail,
                 listName = listName,
                 snackbar = snackbar,
                 onBack = { settings = false },
                 onResume = vm::refreshStatus,
                 onSaveClaudeKey = vm::saveClaudeKey,
-                onConnectOurGroceries = vm::ourGroceriesSignInUrl,
+                onSignInOurGroceries = vm::signInToOurGroceries,
                 onDisconnectOurGroceries = vm::disconnectOurGroceries,
                 onListNameChange = vm::setListName,
                 onExport = vm::export,

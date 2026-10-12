@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -30,12 +29,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -50,12 +52,13 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     hasClaudeKey: Boolean,
     ourGroceriesConnected: Boolean,
+    ourGroceriesEmail: String?,
     listName: String,
     snackbar: SnackbarHostState,
     onBack: () -> Unit,
     onResume: () -> Unit,
     onSaveClaudeKey: (String) -> Unit,
-    onConnectOurGroceries: suspend () -> Uri?,
+    onSignInOurGroceries: suspend (email: String, password: String) -> Boolean,
     onDisconnectOurGroceries: () -> Unit,
     onListNameChange: (String) -> Unit,
     onExport: (Uri) -> Unit,
@@ -69,10 +72,12 @@ fun SettingsScreen(
         onResume()
         onPauseOrDispose { }
     }
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var key by rememberSaveable { mutableStateOf("") }
     var list by rememberSaveable(listName) { mutableStateOf(listName) }
+    var ogEmail by rememberSaveable { mutableStateOf("") }
+    var ogPassword by remember { mutableStateOf("") }
+    var signingIn by remember { mutableStateOf(false) }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri?.let(onExport)
     }
@@ -129,13 +134,34 @@ fun SettingsScreen(
             Panel("OurGroceries") {
                 Text(
                     if (ourGroceriesConnected) {
-                        "Connected. \"Add to list\" puts ingredients straight onto your list."
+                        "Signed in as ${ourGroceriesEmail.orEmpty()}. \"Add to list\" puts ingredients straight onto your list, filed in the aisles you use."
                     } else {
-                        "Right now \"Add to list\" copies your items and opens OurGroceries for you to paste them in. Connecting puts them straight onto your list, filed in the right aisles, but OurGroceries has to approve Recipe Box first. Once it has, tap Connect and sign in on their page; this app never sees your password."
+                        "Sign in so \"Add to list\" goes straight into OurGroceries, filed in the aisles you use. Until then, items are copied to your clipboard."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Tin.Ink,
                 )
+                if (!ourGroceriesConnected) {
+                    OutlinedTextField(
+                        value = ogEmail,
+                        onValueChange = { ogEmail = it },
+                        label = { Text("OurGroceries email") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        colors = fieldColours(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = ogPassword,
+                        onValueChange = { ogPassword = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        colors = fieldColours(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 OutlinedTextField(
                     value = list,
                     onValueChange = { list = it },
@@ -146,20 +172,23 @@ fun SettingsScreen(
                 )
                 LaunchedEffect(list) { if (list != listName && list.isNotBlank()) onListNameChange(list) }
                 if (ourGroceriesConnected) {
-                    StickerButton(onClick = onDisconnectOurGroceries, fill = Tin.Card, minHeight = 48.dp) { Text("Disconnect") }
+                    StickerButton(onClick = onDisconnectOurGroceries, fill = Tin.Card, minHeight = 48.dp) { Text("Sign out") }
                 } else {
                     StickerButton(
                         onClick = {
+                            signingIn = true
                             scope.launch {
-                                onConnectOurGroceries()?.let { CustomTabsIntent.Builder().build().launchUrl(context, it) }
+                                if (onSignInOurGroceries(ogEmail, ogPassword)) ogPassword = ""
+                                signingIn = false
                             }
                         },
+                        enabled = !signingIn && ogEmail.isNotBlank() && ogPassword.isNotEmpty(),
                         fill = Tin.Pea,
                         minHeight = 48.dp,
-                    ) { Text("Connect OurGroceries") }
+                    ) { Text(if (signingIn) "Signing in…" else "Sign in") }
                 }
                 Text(
-                    "OurGroceries calls this connection experimental, so it may need reconnecting now and then.",
+                    "This uses the same connection as the OurGroceries website, which isn't officially supported, so it could stop working if they change their site. Your password is stored encrypted on this phone and only ever sent to ourgroceries.com.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Tin.Ink,
                 )

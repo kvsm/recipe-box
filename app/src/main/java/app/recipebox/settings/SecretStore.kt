@@ -45,11 +45,11 @@ class SecretStore(context: Context) {
 
     companion object {
         const val CLAUDE_API_KEY = "claude_api_key"
-        const val OG_ACCESS_TOKEN = "og_access_token"
-        const val OG_TOKEN_EXPIRES_AT = "og_token_expires_at"
-        const val OG_CLIENT_ID = "og_client_id"
-        const val OG_PKCE_VERIFIER = "og_pkce_verifier"
-        const val OG_STATE = "og_state"
+        const val OG_EMAIL = "og_email"
+        const val OG_PASSWORD = "og_password"
+        const val OG_SESSION = "og_session"
+        const val OG_TEAM_ID = "og_team_id"
+        const val OG_CATEGORY_LIST_ID = "og_category_list_id"
         const val OG_LIST_NAME = "og_list_name"
     }
 }

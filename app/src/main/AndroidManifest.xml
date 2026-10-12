@@ -44,21 +44,6 @@
             </intent-filter>
         </activity>
 
-        <!-- OurGroceries sign-in redirects back here: app.recipebox:/oauth/ourgroceries -->
-        <activity
-            android:name=".groceries.OAuthRedirectActivity"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:noHistory="true"
-            android:theme="@style/Theme.RecipeBox.Translucent">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="app.recipebox" />
-            </intent-filter>
-        </activity>
         <!-- Lets the camera app save a photo straight into Recipe Box. -->
         <provider
             android:name="androidx.core.content.FileProvider"

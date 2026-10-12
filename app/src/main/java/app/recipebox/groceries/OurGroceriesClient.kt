@@ -1,370 +1,271 @@
 package app.recipebox.groceries
 
-import android.net.Uri
 import app.recipebox.settings.SecretStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.FormBody
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.util.Base64
 
 class GroceryException(message: String) : Exception(message)
 
 /**
- * Talks to OurGroceries' official MCP server (https://www.ourgroceries.com/mcp).
+ * Talks to OurGroceries through the API its own website uses, which OurGroceries
+ * support recommended over their MCP server (MCP tools can change at any time;
+ * agents cope with that, a compiled app doesn't). Ported from the MIT-licensed
+ * Python library py-our-groceries (github.com/ljmerza/py-our-groceries), which
+ * Home Assistant also uses. It's unofficial, so neither is supported by OurGroceries.
  *
- * Auth is standard MCP OAuth: dynamic client registration, authorization code
- * with PKCE, public client (no secret). The user signs in on OurGroceries' own
- * page in a browser tab; the app only ever holds the access token.
+ * How it works:
+ *  - Sign in: POST the sign-in form; the session lives in the "ourgroceries-auth" cookie.
+ *  - GET /your-lists/: the page carries the account's team ID and, in its list metadata,
+ *    the ID of the account's category list.
+ *  - Everything else: POST /your-lists/ with JSON {command, teamId, ...}.
+ *    getOverview → {shoppingLists: [{id, name, versionId}], recipes: [...]}
+ *    getList {listId} → {list: {items: [{id, name|value, categoryId, crossedOffAt}]}}
+ *    insertItems {items: [{listId, value, categoryId?, note?}]}; leaving categoryId out
+ *    lets OurGroceries pick the category itself.
  *
- * Tools used (OurGroceries labels the server experimental, so these may change):
- *  - get_lists {type}: the user's lists with id, name and list_type
- *  - get_categories: the user's category names (items are matched to these, never new ones)
- *  - get_list_items {list_id, active_only: false}: each list's items and history, to reuse the user's own categories
- *  - edit_items {operations: [{action: "add", list_id, name, note, category}]}: batch add
+ * There's no OAuth, so the email and password are kept (encrypted, via [SecretStore])
+ * to sign in again when the session cookie expires. They're only ever sent to ourgroceries.com.
  */
 class OurGroceriesClient(
-    private val http: OkHttpClient,
+    http: OkHttpClient,
     private val secrets: SecretStore,
     private val categories: CategoryMatcher,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    private val http = http.newBuilder().followRedirects(true).build()
 
-    fun isConnected(): Boolean {
-        if (secrets.get(SecretStore.OG_ACCESS_TOKEN).isNullOrEmpty()) return false
-        val expiresAt = secrets.get(SecretStore.OG_TOKEN_EXPIRES_AT)?.toLongOrNull() ?: return true
-        return System.currentTimeMillis() < expiresAt
-    }
+    fun isConnected(): Boolean =
+        !secrets.get(SecretStore.OG_EMAIL).isNullOrEmpty() && !secrets.get(SecretStore.OG_PASSWORD).isNullOrEmpty()
+
+    fun connectedEmail(): String? = secrets.get(SecretStore.OG_EMAIL)
 
     fun signOut() {
-        secrets.put(SecretStore.OG_ACCESS_TOKEN, null)
-        secrets.put(SecretStore.OG_TOKEN_EXPIRES_AT, null)
+        listOf(SecretStore.OG_EMAIL, SecretStore.OG_PASSWORD, SecretStore.OG_SESSION, SecretStore.OG_TEAM_ID, SecretStore.OG_CATEGORY_LIST_ID)
+            .forEach { secrets.put(it, null) }
     }
 
-    // ---------- OAuth ----------
-
-    /** Registers the app if needed and returns the sign-in page to open in a browser tab. */
-    suspend fun beginSignIn(): Uri = withContext(Dispatchers.IO) {
-        val clientId = secrets.get(SecretStore.OG_CLIENT_ID) ?: register().also { secrets.put(SecretStore.OG_CLIENT_ID, it) }
-        val verifier = randomUrlSafe(64)
-        val state = randomUrlSafe(24)
-        secrets.put(SecretStore.OG_PKCE_VERIFIER, verifier)
-        secrets.put(SecretStore.OG_STATE, state)
-
-        Uri.parse(AUTHORIZE).buildUpon()
-            .appendQueryParameter("response_type", "code")
-            .appendQueryParameter("client_id", clientId)
-            .appendQueryParameter("redirect_uri", REDIRECT_URI)
-            .appendQueryParameter("code_challenge", challengeFor(verifier))
-            .appendQueryParameter("code_challenge_method", "S256")
-            .appendQueryParameter("state", state)
-            .appendQueryParameter("resource", RESOURCE)
-            .build()
+    /** Checks the email and password by signing in, and keeps them if they work. */
+    suspend fun signIn(email: String, password: String) = withContext(Dispatchers.IO) {
+        val session = login(email.trim(), password)
+        secrets.put(SecretStore.OG_EMAIL, email.trim())
+        secrets.put(SecretStore.OG_PASSWORD, password)
+        secrets.put(SecretStore.OG_SESSION, session)
+        loadAccount(session)
     }
 
-    /** Handles the redirect back into the app and swaps the code for a token. */
-    suspend fun completeSignIn(redirect: Uri) = withContext(Dispatchers.IO) {
-        redirect.getQueryParameter("error")?.let { throw GroceryException("OurGroceries sign-in was cancelled ($it).") }
-        val code = redirect.getQueryParameter("code") ?: throw GroceryException("OurGroceries didn't send a sign-in code.")
-        if (redirect.getQueryParameter("state") != secrets.get(SecretStore.OG_STATE)) {
-            throw GroceryException("Sign-in check failed. Try connecting again.")
-        }
-        val clientId = secrets.get(SecretStore.OG_CLIENT_ID) ?: throw GroceryException("Sign-in expired. Try connecting again.")
-        val verifier = secrets.get(SecretStore.OG_PKCE_VERIFIER) ?: throw GroceryException("Sign-in expired. Try connecting again.")
-
-        val form = FormBody.Builder()
-            .add("grant_type", "authorization_code")
-            .add("code", code)
-            .add("redirect_uri", REDIRECT_URI)
-            .add("client_id", clientId)
-            .add("code_verifier", verifier)
-            .add("resource", RESOURCE)
-            .build()
-        val body = http.newCall(Request.Builder().url(TOKEN).post(form).build()).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw GroceryException("OurGroceries sign-in failed (${response.code}${errorDescription(text)?.let { ": $it" } ?: ""}).")
-            }
-            json.parseToJsonElement(text).jsonObject
-        }
-        val token = body["access_token"]?.jsonPrimitive?.contentOrNull
-            ?: throw GroceryException("OurGroceries didn't return a token.")
-        secrets.put(SecretStore.OG_ACCESS_TOKEN, token)
-        secrets.put(
-            SecretStore.OG_TOKEN_EXPIRES_AT,
-            body["expires_in"]?.jsonPrimitive?.longOrNull?.let { (System.currentTimeMillis() + it * 1000).toString() },
-        )
-        secrets.put(SecretStore.OG_PKCE_VERIFIER, null)
-        secrets.put(SecretStore.OG_STATE, null)
-    }
-
-    /** OAuth servers explain a refusal in error_description (or at least error); null if the body isn't that. */
-    private fun errorDescription(body: String): String? = runCatching {
-        val obj = json.parseToJsonElement(body).jsonObject
-        (obj["error_description"] ?: obj["error"])?.jsonPrimitive?.contentOrNull
-    }.getOrNull()
-
-    private fun register(): String {
-        val payload = buildJsonObject {
-            put("client_name", "Recipe Box")
-            putJsonArray("redirect_uris") { add(JsonPrimitive(REDIRECT_URI)) }
-            putJsonArray("grant_types") { add(JsonPrimitive("authorization_code")) }
-            putJsonArray("response_types") { add(JsonPrimitive("code")) }
-            put("token_endpoint_auth_method", "none")
-        }
-        val request = Request.Builder().url(REGISTER).post(payload.toString().toRequestBody(JSON_MEDIA)).build()
-        return http.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val reason = errorDescription(text)
-                throw GroceryException(
-                    if (reason?.contains("client_name", ignoreCase = true) == true) {
-                        "OurGroceries hasn't approved Recipe Box yet. Until it does, Add to list copies your items to paste in."
-                    } else {
-                        "OurGroceries wouldn't register the app (${response.code}${reason?.let { ": $it" } ?: ""})."
-                    },
-                )
-            }
-            json.parseToJsonElement(text).jsonObject["client_id"]?.jsonPrimitive?.contentOrNull
-                ?: throw GroceryException("OurGroceries didn't return a client ID.")
-        }
-    }
-
-    // ---------- MCP ----------
+    // ---------- Adding items ----------
 
     /**
-     * Adds [items] to the shopping list called [listName] (matched case-insensitively).
-     * Uses OurGroceries' get_lists to find the list's ID, then one edit_items batch.
+     * Adds [items] to the shopping list called [listName] (matched case-insensitively),
+     * each in the category the user has used for it before where possible.
      * Returns how many were added.
      */
     suspend fun addItems(items: List<GroceryItem>, listName: String): Int = withContext(Dispatchers.IO) {
         if (items.isEmpty()) return@withContext 0
-        val session = McpSession()
-        session.initialize()
 
-        // All lists (shopping and recipes): the target is matched among shopping lists,
-        // and every list's items feed the category history.
-        val lists = session.callTool("get_lists", buildJsonObject { put("type", "all") }).asArray().map { it.jsonObject }
-        val shopping = lists.filter { it["list_type"]?.jsonPrimitive?.contentOrNull.equals("shopping", ignoreCase = true) }
-        val match = shopping.firstOrNull {
-            it["name"]?.jsonPrimitive?.contentOrNull.equals(listName.trim(), ignoreCase = true)
-        } ?: throw GroceryException(
-            "There's no OurGroceries list called \"$listName\". Your lists: " +
-                shopping.mapNotNull { it["name"]?.jsonPrimitive?.contentOrNull }.joinToString(),
-        )
-        val listId = match["id"]!!.jsonPrimitive.content
+        val overview = command("getOverview")
+        val shopping = overview.lists("shoppingLists")
+        val recipes = overview.lists("recipes")
+        val target = shopping.firstOrNull { it.name.equals(listName.trim(), ignoreCase = true) }
+            ?: throw GroceryException(
+                "There's no OurGroceries list called \"$listName\". Your lists: " + shopping.joinToString { it.name },
+            )
 
-        // Put each item in one of the user's existing categories, so nothing lands "Uncategorised".
-        val existing = session.callTool("get_categories", buildJsonObject {}).let { result ->
-            (result as? JsonObject)?.get("categories")?.jsonArray ?: result.asArray()
-        }.mapNotNull { it.jsonPrimitive.contentOrNull }
-        val history = categoryHistory(session, listId, lists)
-        val assigned = categories.assign(items, existing, history)
+        // The user's own categories, by name → id.
+        val categoryIds = categoryListId()?.let { id ->
+            command("getList", mapOf("listId" to JsonPrimitive(id))).items()
+                .mapNotNull { item -> item.text?.let { it to item.id } }
+                .toMap()
+        }.orEmpty()
 
-        val reply = session.callTool("edit_items", buildJsonObject {
-            putJsonArray("operations") {
-                items.forEach { item ->
-                    addJsonObject {
-                        put("action", "add")
-                        put("list_id", listId)
-                        // OurGroceries' convention is lower case except proper nouns.
-                        put("name", item.name.replaceFirstChar { it.lowercase() })
-                        item.note?.let { put("note", it) }
-                        assigned[item.name.lowercase()]?.let { put("category", it) }
-                    }
-                }
+        val history = categoryHistory(target, shopping, recipes, categoryIds.entries.associate { (name, id) -> id to name })
+        val assigned = categories.assign(items, categoryIds.keys.toList(), history)
+
+        command("insertItems", mapOf("items" to JsonArray(items.map { item ->
+            buildJsonObject {
+                put("listId", target.id)
+                // OurGroceries' convention is lower case except proper nouns.
+                put("value", item.name.replaceFirstChar { it.lowercase() })
+                item.note?.takeIf { it.isNotBlank() }?.let { put("note", it) }
+                // Unmatched items have no categoryId, so OurGroceries files them itself.
+                assigned[item.name.lowercase()]?.let { categoryIds[it] }?.let { put("categoryId", it) }
             }
-        })
-        // Each op reports back, e.g. {"action":"ADDED","item_id":...}; count what actually landed.
-        reply.asArray().count { (it as? JsonObject)?.get("action")?.jsonPrimitive?.contentOrNull == "ADDED" }
+        })))
+        items.size
     }
 
     /**
-     * The categories the user has actually given items, read from every list
-     * including crossed-off history. Item name (normalised) → category.
-     * Precedence when the same item appears more than once: the target list
-     * beats other shopping lists, which beat recipes; within a list, an item
-     * still on the list beats a crossed-off one.
+     * The categories the user has actually given items, from every list including
+     * crossed-off history. Item name (normalised) → category name. When an item
+     * appears more than once, the target list beats other shopping lists, which beat
+     * recipes; within a list, an item still on the list beats a crossed-off one.
      */
-    private fun categoryHistory(session: McpSession, targetListId: String, lists: List<JsonObject>): Map<String, String> {
-        fun rank(list: JsonObject): Int {
-            val id = list["id"]?.jsonPrimitive?.contentOrNull
-            val type = list["list_type"]?.jsonPrimitive?.contentOrNull.orEmpty().lowercase()
-            return when {
-                id == targetListId -> 0
-                type == "shopping" -> 1
-                else -> 2
-            }
-        }
+    private fun categoryHistory(
+        target: OgList,
+        shopping: List<OgList>,
+        recipes: List<OgList>,
+        categoryNames: Map<String, String>,
+    ): Map<String, String> {
         val history = mutableMapOf<String, String>()
-        // Lowest precedence first, so later writes overwrite earlier ones.
-        lists.sortedByDescending { rank(it) }.forEach { list ->
-            val id = list["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-            val items = runCatching {
-                session.callTool("get_list_items", buildJsonObject {
-                    put("list_id", id)
-                    put("active_only", false)
-                })
-            }.getOrNull() ?: return@forEach
-            val entries = ((items as? JsonObject)?.get("items")?.jsonArray ?: items.asArray()).map { it.jsonObject }
-            entries.sortedByDescending { it["is_crossed_off"]?.jsonPrimitive?.booleanOrNull == true }.forEach { item ->
-                val name = item["name"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                val category = item["category"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
+        // Lowest precedence first, so later writes win.
+        val ordered = recipes + shopping.filter { it.id != target.id } + target
+        ordered.forEach { list ->
+            val items = runCatching { command("getList", mapOf("listId" to JsonPrimitive(list.id))).items() }.getOrNull()
+                ?: return@forEach
+            items.sortedByDescending { it.crossedOff }.forEach { item ->
+                val name = item.text ?: return@forEach
+                val category = item.categoryId?.let { categoryNames[it] } ?: return@forEach
                 history[CategoryMatcher.normalise(name)] = category
             }
         }
         return history
     }
 
-    /** One Streamable HTTP MCP session. */
-    private inner class McpSession {
-        private var sessionId: String? = null
-        private var protocolVersion: String? = null
-        private var nextId = 1
+    // ---------- Session ----------
 
-        fun initialize() {
-            val result = request("initialize", buildJsonObject {
-                put("protocolVersion", PROTOCOL_VERSION)
-                putJsonObject("capabilities") {}
-                putJsonObject("clientInfo") {
-                    put("name", "recipe-box")
-                    put("version", "0.1.0")
+    /** Runs a command, signing in again once if the session has expired. */
+    private fun command(name: String, extra: Map<String, JsonElement> = emptyMap()): JsonObject {
+        var session = secrets.get(SecretStore.OG_SESSION) ?: relogin()
+        repeat(2) { attempt ->
+            val teamId = secrets.get(SecretStore.OG_TEAM_ID) ?: loadAccount(session)
+            val body = buildJsonObject {
+                put("command", name)
+                put("teamId", teamId)
+                extra.forEach { (k, v) -> put(k, v) }
+            }
+            val request = Request.Builder()
+                .url(YOUR_LISTS)
+                .header("Cookie", "$COOKIE=$session")
+                .header("Accept", "application/json")
+                .post(body.toString().toRequestBody(JSON_MEDIA))
+                .build()
+            val reply = http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful && response.code !in listOf(401, 403)) {
+                    throw GroceryException("OurGroceries returned an error (${response.code}).")
                 }
-            })
-            protocolVersion = result["protocolVersion"]?.jsonPrimitive?.contentOrNull ?: PROTOCOL_VERSION
-            notify("notifications/initialized")
-        }
-
-        /** Calls a tool and returns its result: structured content if given, else the text parsed as JSON. */
-        fun callTool(name: String, arguments: JsonObject): JsonElement {
-            val result = request("tools/call", buildJsonObject {
-                put("name", name)
-                put("arguments", arguments)
-            })
-            if (result["isError"]?.jsonPrimitive?.booleanOrNull == true) {
-                throw GroceryException("OurGroceries said: ${result.textContent().ifBlank { "something went wrong" }}")
+                response.body?.string().orEmpty()
             }
-            result["structuredContent"]?.let { return it }
-            val text = result.textContent()
-            return runCatching { json.parseToJsonElement(text) }.getOrElse { JsonPrimitive(text) }
+            // An expired session gets the sign-in page (HTML) back instead of JSON.
+            val parsed = runCatching { json.parseToJsonElement(reply) as? JsonObject }.getOrNull()
+            if (parsed != null) return parsed
+            if (attempt == 0) session = relogin()
+        }
+        throw GroceryException("OurGroceries didn't accept the sign-in. Check your email and password in Settings.")
+    }
+
+    private fun relogin(): String {
+        val email = secrets.get(SecretStore.OG_EMAIL)
+        val password = secrets.get(SecretStore.OG_PASSWORD)
+        if (email.isNullOrEmpty() || password.isNullOrEmpty()) throw GroceryException("Sign in to OurGroceries in Settings first.")
+        return login(email, password).also {
+            secrets.put(SecretStore.OG_SESSION, it)
+            secrets.put(SecretStore.OG_TEAM_ID, null)
+            secrets.put(SecretStore.OG_CATEGORY_LIST_ID, null)
+        }
+    }
+
+    /** Posts the sign-in form and returns the session cookie's value. */
+    private fun login(email: String, password: String): String {
+        val jar = MemoryCookieJar()
+        val client = http.newBuilder().cookieJar(jar).build()
+        val form = FormBody.Builder()
+            .add("emailAddress", email)
+            .add("password", password)
+            .add("action", "sign-in")
+            .build()
+        client.newCall(Request.Builder().url(SIGN_IN).post(form).build()).execute().use { response ->
+            if (response.code >= 500) throw GroceryException("OurGroceries is having trouble (${response.code}). Try again in a bit.")
+        }
+        return jar.find(COOKIE) ?: throw GroceryException("OurGroceries didn't recognise that email and password.")
+    }
+
+    /** Reads the team ID and category list ID from the lists page. Returns the team ID. */
+    private fun loadAccount(session: String): String {
+        val page = http.newCall(Request.Builder().url(YOUR_LISTS).header("Cookie", "$COOKIE=$session").build())
+            .execute().use { it.body?.string().orEmpty() }
+        val teamId = TEAM_ID.find(page)?.groupValues?.get(1)
+            ?: throw GroceryException("Couldn't read your OurGroceries account. They may have changed their site.")
+        secrets.put(SecretStore.OG_TEAM_ID, teamId)
+        STATIC_METALIST.find(page)?.groupValues?.get(1)?.let { metalist ->
+            runCatching {
+                json.parseToJsonElement(metalist).jsonArray
+                    .map { it.jsonObject }
+                    .firstOrNull { it.string("listType") == "CATEGORY" }
+                    ?.string("id")
+            }.getOrNull()?.let { secrets.put(SecretStore.OG_CATEGORY_LIST_ID, it) }
+        }
+        return teamId
+    }
+
+    private fun categoryListId(): String? = secrets.get(SecretStore.OG_CATEGORY_LIST_ID)
+        ?: secrets.get(SecretStore.OG_SESSION)?.let { loadAccount(it); secrets.get(SecretStore.OG_CATEGORY_LIST_ID) }
+
+    // ---------- Reply shapes ----------
+
+    private data class OgList(val id: String, val name: String)
+    private data class OgItem(val id: String, val text: String?, val categoryId: String?, val crossedOff: Boolean)
+
+    private fun JsonObject.lists(key: String): List<OgList> =
+        (this[key] as? JsonArray).orEmpty().mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val id = obj.string("id") ?: return@mapNotNull null
+            OgList(id, obj.string("name").orEmpty())
         }
 
-        fun request(method: String, params: JsonObject): JsonObject {
-            val id = nextId++
-            val message = buildJsonObject {
-                put("jsonrpc", "2.0")
-                put("id", id)
-                put("method", method)
-                put("params", params)
-            }
-            val reply = post(message) ?: throw GroceryException("OurGroceries didn't answer $method.")
-            val response = findResponse(reply, id) ?: throw GroceryException("OurGroceries sent an unexpected reply to $method.")
-            response["error"]?.jsonObject?.let { err ->
-                throw GroceryException("OurGroceries error: ${err["message"]?.jsonPrimitive?.contentOrNull ?: "unknown"}")
-            }
-            return response["result"]?.jsonObject ?: buildJsonObject {}
+    private fun JsonObject.items(): List<OgItem> =
+        ((this["list"] as? JsonObject)?.get("items") as? JsonArray).orEmpty().mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val id = obj.string("id") ?: return@mapNotNull null
+            OgItem(
+                id = id,
+                text = (obj.string("value") ?: obj.string("name"))?.takeIf { it.isNotBlank() },
+                categoryId = obj.string("categoryId")?.takeIf { it.isNotBlank() },
+                crossedOff = obj["crossedOffAt"].let { it != null && it !is JsonNull } ||
+                    obj.string("crossedOff") == "true",
+            )
         }
 
-        private fun notify(method: String) {
-            post(buildJsonObject {
-                put("jsonrpc", "2.0")
-                put("method", method)
-            })
-        }
+    private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
-        /** Returns the raw body, or null for 202 Accepted. */
-        private fun post(message: JsonObject): Pair<String, String>? {
-            val token = secrets.get(SecretStore.OG_ACCESS_TOKEN) ?: throw GroceryException("Connect OurGroceries in Settings first.")
-            val builder = Request.Builder()
-                .url(MCP_URL)
-                .header("Authorization", "Bearer $token")
-                .header("Accept", "application/json, text/event-stream")
-                .post(message.toString().toRequestBody(JSON_MEDIA))
-            sessionId?.let { builder.header("Mcp-Session-Id", it) }
-            protocolVersion?.let { builder.header("MCP-Protocol-Version", it) }
-
-            http.newCall(builder.build()).execute().use { response ->
-                if (response.code == 401 || response.code == 403) {
-                    signOut()
-                    throw GroceryException("OurGroceries signed you out. Reconnect it in Settings.")
-                }
-                if (!response.isSuccessful) throw GroceryException("OurGroceries returned an error (${response.code}).")
-                response.header("Mcp-Session-Id")?.let { sessionId = it }
-                if (response.code == 202) return null
-                return (response.header("Content-Type").orEmpty()) to response.body?.string().orEmpty()
-            }
-        }
-
-        private fun findResponse(reply: Pair<String, String>, id: Int): JsonObject? {
-            val (contentType, body) = reply
-            val candidates: List<JsonElement> = if (contentType.contains("text/event-stream")) {
-                body.lineSequence()
-                    .filter { it.startsWith("data:") }
-                    .mapNotNull { runCatching { json.parseToJsonElement(it.removePrefix("data:").trim()) }.getOrNull() }
-                    .toList()
-            } else {
-                listOfNotNull(runCatching { json.parseToJsonElement(body) }.getOrNull())
-            }
-            return candidates
-                .flatMap { if (it is JsonArray) it.toList() else listOf(it) }
-                .map { it.jsonObject }
-                .firstOrNull { it["id"]?.jsonPrimitive?.intOrNull == id }
-        }
+    /** Keeps cookies for one sign-in, across its redirects. */
+    private class MemoryCookieJar : CookieJar {
+        private val cookies = mutableListOf<Cookie>()
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) { this.cookies += cookies }
+        override fun loadForRequest(url: HttpUrl): List<Cookie> = cookies.filter { it.matches(url) }
+        fun find(name: String): String? = cookies.lastOrNull { it.name == name && it.value.isNotEmpty() }?.value
     }
 
     companion object {
-        const val REDIRECT_SCHEME = "app.recipebox"
-        const val REDIRECT_URI = "$REDIRECT_SCHEME:/oauth/ourgroceries"
         private const val BASE = "https://www.ourgroceries.com"
-        private const val RESOURCE = BASE
-        private const val MCP_URL = "$BASE/mcp"
-        private const val AUTHORIZE = "$BASE/oauth2"
-        private const val TOKEN = "$BASE/oauth2/token"
-        private const val REGISTER = "$BASE/oauth2/register"
-        private const val PROTOCOL_VERSION = "2025-06-18"
+        private const val SIGN_IN = "$BASE/sign-in"
+        private const val YOUR_LISTS = "$BASE/your-lists/"
+        private const val COOKIE = "ourgroceries-auth"
+        private val TEAM_ID = Regex("""g_teamId = "(.*?)";""")
+        private val STATIC_METALIST = Regex("""g_staticMetalist = (\[.*\]);""")
         private val JSON_MEDIA = "application/json".toMediaType()
-
-        private fun randomUrlSafe(bytes: Int): String =
-            Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(bytes).also { SecureRandom().nextBytes(it) })
-
-        private fun challengeFor(verifier: String): String =
-            Base64.getUrlEncoder().withoutPadding()
-                .encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
     }
-}
-
-private fun JsonObject.textContent(): String =
-    this["content"]?.jsonArray.orEmpty()
-        .mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
-        .joinToString(" ")
-
-/** get_lists may come back as a bare array or wrapped in an object. */
-private fun JsonElement.asArray(): JsonArray = when (this) {
-    is JsonArray -> this
-    is JsonObject -> values.firstOrNull { it is JsonArray } as? JsonArray ?: JsonArray(emptyList())
-    else -> JsonArray(emptyList())
 }
 
 /** One shopping-list entry: "floury potatoes" with the note "1 kg". */
