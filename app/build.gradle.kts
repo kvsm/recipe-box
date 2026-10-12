@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -77,7 +79,7 @@ val downloadFonts by tasks.registering {
             val target = File(fontsDir, name)
             if (target.exists() && target.length() > 0) return@forEach
             runCatching {
-                java.net.URI(url).toURL().openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+                URI(url).toURL().openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
             }.onFailure {
                 target.delete()
                 logger.warn("Couldn't download $name (${it.message}). Drop it into ${fontsDir.path} by hand, or the app uses system fonts.")
