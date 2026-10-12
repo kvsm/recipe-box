@@ -37,6 +37,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.platform.LocalAutofillManager
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -78,6 +82,7 @@ fun SettingsScreen(
     var ogEmail by rememberSaveable { mutableStateOf("") }
     var ogPassword by remember { mutableStateOf("") }
     var signingIn by remember { mutableStateOf(false) }
+    val autofill = LocalAutofillManager.current
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri?.let(onExport)
     }
@@ -149,7 +154,8 @@ fun SettingsScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         colors = fieldColours(),
-                        modifier = Modifier.fillMaxWidth(),
+                        // Lets password managers (Google, Bitwarden…) fill in a saved OurGroceries login.
+                        modifier = Modifier.fillMaxWidth().semantics { contentType = ContentType.Username },
                     )
                     OutlinedTextField(
                         value = ogPassword,
@@ -159,7 +165,7 @@ fun SettingsScreen(
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         colors = fieldColours(),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
                     )
                 }
                 OutlinedTextField(
@@ -178,7 +184,11 @@ fun SettingsScreen(
                         onClick = {
                             signingIn = true
                             scope.launch {
-                                if (onSignInOurGroceries(ogEmail, ogPassword)) ogPassword = ""
+                                if (onSignInOurGroceries(ogEmail, ogPassword)) {
+                                    // Tells the password manager the login worked, so it can offer to save it.
+                                    autofill?.commit()
+                                    ogPassword = ""
+                                }
                                 signingIn = false
                             }
                         },
