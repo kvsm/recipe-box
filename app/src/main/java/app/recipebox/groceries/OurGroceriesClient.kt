@@ -85,7 +85,7 @@ class OurGroceriesClient(
     suspend fun addItems(items: List<GroceryItem>, listName: String): Int = withContext(Dispatchers.IO) {
         if (items.isEmpty()) return@withContext 0
 
-        val overview = command("getOverview")
+        val overview = step("Reading your lists") { command("getOverview") }
         val shopping = overview.lists("shoppingLists")
         val recipes = overview.lists("recipes")
         val target = shopping.firstOrNull { it.name.equals(listName.trim(), ignoreCase = true) }
@@ -94,16 +94,18 @@ class OurGroceriesClient(
             )
 
         // The user's own categories, by name → id.
-        val categoryIds = categoryListId()?.let { id ->
-            command("getList", mapOf("listId" to JsonPrimitive(id))).items()
-                .mapNotNull { item -> item.text?.let { it to item.id } }
-                .toMap()
-        }.orEmpty()
+        val categoryIds = step("Reading your categories") {
+            categoryListId()?.let { id ->
+                command("getList", mapOf("listId" to JsonPrimitive(id))).items()
+                    .mapNotNull { item -> item.text?.let { it to item.id } }
+                    .toMap()
+            }.orEmpty()
+        }
 
         val history = categoryHistory(target, shopping, recipes, categoryIds.entries.associate { (name, id) -> id to name })
-        val assigned = categories.assign(items, categoryIds.keys.toList(), history)
+        val assigned = step("Picking categories") { categories.assign(items, categoryIds.keys.toList(), history) }
 
-        command("insertItems", mapOf("items" to JsonArray(items.map { item ->
+        val reply = step("Adding the items") { command("insertItems", mapOf("items" to JsonArray(items.map { item ->
             buildJsonObject {
                 put("listId", target.id)
                 // OurGroceries' convention is lower case except proper nouns.
@@ -112,8 +114,23 @@ class OurGroceriesClient(
                 // Unmatched items have no categoryId, so OurGroceries files them itself.
                 assigned[item.name.lowercase()]?.let { categoryIds[it] }?.let { put("categoryId", it) }
             }
-        })))
+        }))) }
+        // The website API answers errors in JSON too, rather than with an HTTP error.
+        reply.string("error")?.let { throw GroceryException("Adding the items: OurGroceries said \"$it\"") }
         items.size
+    }
+
+    /** Runs one stage of adding, labelling any failure with the stage, so a problem can be pinned down. */
+    private inline fun <T> step(label: String, block: () -> T): T = try {
+        block()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        val detail = when (e) {
+            is GroceryException -> e.message
+            else -> "${e::class.simpleName}: ${e.message}"
+        }
+        throw GroceryException("$label: $detail")
     }
 
     /**
@@ -148,6 +165,7 @@ class OurGroceriesClient(
     /** Runs a command, signing in again once if the session has expired. */
     private fun command(name: String, extra: Map<String, JsonElement> = emptyMap()): JsonObject {
         var session = secrets.get(SecretStore.OG_SESSION) ?: relogin()
+        var lastReply = ""
         repeat(2) { attempt ->
             val teamId = secrets.get(SecretStore.OG_TEAM_ID) ?: loadAccount(session)
             val body = buildJsonObject {
@@ -170,9 +188,12 @@ class OurGroceriesClient(
             // An expired session gets the sign-in page (HTML) back instead of JSON.
             val parsed = runCatching { json.parseToJsonElement(reply) as? JsonObject }.getOrNull()
             if (parsed != null) return parsed
-            if (attempt == 0) session = relogin()
+            if (attempt == 0) session = relogin() else lastReply = reply
         }
-        throw GroceryException("OurGroceries didn't accept the sign-in. Check your email and password in Settings.")
+        throw GroceryException(
+            "OurGroceries didn't send back what the app expected for \"$name\". It started: " +
+                lastReply.replace(Regex("\\s+"), " ").take(160),
+        )
     }
 
     private fun relogin(): String {

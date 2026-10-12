@@ -20,8 +20,9 @@ class GroceryRouter(
 ) {
     sealed interface Outcome {
         data class Added(val count: Int, val listName: String) : Outcome
-        /** [reason] is set when a direct add was tried and failed. */
-        data class Copied(val count: Int, val openedApp: Boolean, val reason: String?) : Outcome
+        data class Copied(val count: Int, val openedApp: Boolean) : Outcome
+        /** Signed in, but the direct add didn't work. Nothing has been copied or opened. */
+        data class Failed(val reason: String) : Outcome
     }
 
     var listName: String
@@ -29,20 +30,20 @@ class GroceryRouter(
         set(value) = secrets.put(SecretStore.OG_LIST_NAME, value.trim().ifEmpty { null })
 
     suspend fun send(items: List<GroceryItem>): Outcome {
-        var failure: String? = null
-        if (ourGroceries.isConnected()) {
-            try {
-                return Outcome.Added(ourGroceries.addItems(items, listName), listName)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failure = e.message
-            }
+        if (!ourGroceries.isConnected()) return copyAndOpen(items)
+        return try {
+            Outcome.Added(ourGroceries.addItems(items, listName), listName)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Outcome.Failed(e.message ?: e::class.simpleName ?: "Unknown error")
         }
-        return withContext(Dispatchers.Main) {
-            copyToClipboard(items)
-            Outcome.Copied(items.size, openOurGroceries(), failure)
-        }
+    }
+
+    /** Copies the items to the clipboard and opens OurGroceries. */
+    suspend fun copyAndOpen(items: List<GroceryItem>): Outcome.Copied = withContext(Dispatchers.Main) {
+        copyToClipboard(items)
+        Outcome.Copied(items.size, openOurGroceries())
     }
 
     /** A plain "share these items" chooser for any other list app. */

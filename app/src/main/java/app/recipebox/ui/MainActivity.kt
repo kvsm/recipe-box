@@ -29,6 +29,9 @@ import app.recipebox.ui.components.BowlArt
 import app.recipebox.ui.theme.Tin
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.getValue
@@ -181,6 +184,23 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
             onImportUrl = vm::importUrl,
             onDismissImports = vm::dismissFinishedImports,
             onRemove = vm::delete,
+        )
+    }
+
+    val groceryFailure by vm.groceryFailure.collectAsStateWithLifecycle()
+    groceryFailure?.let { failure ->
+        AlertDialog(
+            onDismissRequest = vm::dismissGroceryFailure,
+            containerColor = Tin.Card,
+            title = { Text("Couldn't add to OurGroceries", style = MaterialTheme.typography.headlineSmall) },
+            // Selectable, so the exact reason can be copied and sent on.
+            text = { SelectionContainer { Text(failure.reason, style = MaterialTheme.typography.bodyMedium) } },
+            confirmButton = {
+                TextButton(onClick = vm::copyInstead) { Text("Copy items instead", color = Tin.Ink, style = MaterialTheme.typography.titleMedium) }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissGroceryFailure) { Text("OK", color = Tin.Ink, style = MaterialTheme.typography.titleMedium) }
+            },
         )
     }
 

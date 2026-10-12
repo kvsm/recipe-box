@@ -37,6 +37,9 @@ import java.util.UUID
 /** A recipe that's just been taken out of the tin, kept until its Undo runs out. */
 data class Removed(val recipe: Recipe, val raw: RawSnapshot?)
 
+/** A direct add to OurGroceries that didn't work, shown in full so it can be reported. */
+data class GroceryFailure(val reason: String, val items: List<GroceryItem>)
+
 /** An import that's still running, or failed and hasn't been dismissed. */
 data class ImportStatus(val id: UUID, val label: String, val failed: Boolean, val error: String?)
 
@@ -75,6 +78,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _removed = MutableSharedFlow<Removed>(extraBufferCapacity = 4)
     /** Each removal, for the "Removed … Undo" snackbar. */
     val removed: SharedFlow<Removed> = _removed
+
+    private val _groceryFailure = MutableStateFlow<GroceryFailure?>(null)
+    val groceryFailure = _groceryFailure.asStateFlow()
 
     private val _hasClaudeKey = MutableStateFlow(false)
     val hasClaudeKey = _hasClaudeKey.asStateFlow()
@@ -196,20 +202,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun sendToList(items: List<GroceryItem>) {
         if (items.isEmpty()) return
         viewModelScope.launch {
-            val message = when (val outcome = container.groceries.send(items)) {
-                is GroceryRouter.Outcome.Added ->
+            when (val outcome = container.groceries.send(items)) {
+                is GroceryRouter.Outcome.Added -> _messages.emit(
                     if (outcome.count == items.size) "Added ${outcome.count} to ${outcome.listName}"
-                    else "Added ${outcome.count} of ${items.size} to ${outcome.listName}"
-                is GroceryRouter.Outcome.Copied -> buildString {
-                    outcome.reason?.let { append("Couldn't add directly: $it ") }
-                    append("Copied ${outcome.count} items")
-                    append(if (outcome.openedApp) ". Paste them into OurGroceries." else " to your clipboard.")
-                }
+                    else "Added ${outcome.count} of ${items.size} to ${outcome.listName}",
+                )
+                is GroceryRouter.Outcome.Copied -> _messages.emit(copiedMessage(outcome))
+                is GroceryRouter.Outcome.Failed -> _groceryFailure.value = GroceryFailure(outcome.reason, items)
             }
             _ourGroceriesConnected.value = container.ourGroceries.isConnected()
-            _messages.emit(message)
         }
     }
+
+    /** From the failure dialog: fall back to copying after all. */
+    fun copyInstead() {
+        val failure = _groceryFailure.value ?: return
+        _groceryFailure.value = null
+        viewModelScope.launch { _messages.emit(copiedMessage(container.groceries.copyAndOpen(failure.items))) }
+    }
+
+    fun dismissGroceryFailure() {
+        _groceryFailure.value = null
+    }
+
+    private fun copiedMessage(outcome: GroceryRouter.Outcome.Copied) =
+        "Copied ${outcome.count} items" + if (outcome.openedApp) ". Paste them into OurGroceries." else " to your clipboard."
 
     fun saveClaudeKey(key: String) {
         viewModelScope.launch(Dispatchers.IO) {
