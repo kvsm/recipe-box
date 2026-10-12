@@ -42,7 +42,9 @@ import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.semantics.contentDataType
 import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import app.recipebox.data.model.UnitSystem
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -59,6 +61,8 @@ fun SettingsScreen(
     hasClaudeKey: Boolean,
     ourGroceriesConnected: Boolean,
     ourGroceriesEmail: String?,
+    units: UnitSystem,
+    onUnitsChange: (UnitSystem) -> Unit,
     listName: String,
     snackbar: SnackbarHostState,
     onBack: () -> Unit,
@@ -102,6 +106,30 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 RoundStickerButton(onClick = onBack, contentDescription = "Back") { LineIcons.Back() }
                 Text("Settings", style = MaterialTheme.typography.headlineLarge, color = Tin.Ink)
+            }
+
+            Panel("Measurements") {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf(UnitSystem.METRIC to "Metric", UnitSystem.IMPERIAL to "Imperial").forEach { (system, label) ->
+                        val selected = units == system
+                        StickerButton(
+                            onClick = { onUnitsChange(system) },
+                            fill = if (selected) Tin.Pea else Tin.Card,
+                            shadowOffset = if (selected) 1.dp else 3.dp,
+                            minHeight = 48.dp,
+                            modifier = Modifier.semantics { this.selected = selected },
+                        ) { Text(label) }
+                    }
+                }
+                Text(
+                    if (units == UnitSystem.METRIC) {
+                        "Grams, kilos, millilitres and litres, with oven temperatures in °C. Cups of flour, sugar and the like are shown as weights."
+                    } else {
+                        "Ounces, pounds and cups, with oven temperatures in °F."
+                    } + " Teaspoons and tablespoons stay as they are. Your recipes are kept as imported, so you can switch back any time.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Tin.Ink,
+                )
             }
 
             Panel("Claude") {

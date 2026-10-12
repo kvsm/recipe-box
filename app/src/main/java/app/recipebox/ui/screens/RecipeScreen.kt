@@ -69,6 +69,10 @@ import app.recipebox.data.model.formatQuantity
 import app.recipebox.data.model.Ingredient
 import app.recipebox.data.model.editedDisplay
 import app.recipebox.data.model.groceryParts
+import app.recipebox.data.model.Measures
+import app.recipebox.data.model.UnitSystem
+import app.recipebox.data.model.amountLabel
+import app.recipebox.data.model.forCard
 import app.recipebox.data.model.pluralUnit
 import app.recipebox.groceries.GroceryItem
 import app.recipebox.ui.components.BowlArt
@@ -93,6 +97,7 @@ fun RecipeScreen(
     onCook: (servings: Int?) -> Unit,
     onSendToList: (List<GroceryItem>) -> Unit,
     sendingToList: Boolean = false,
+    units: UnitSystem = UnitSystem.METRIC,
     onDelete: () -> Unit,
     onEditIngredient: (index: Int, Ingredient) -> Unit,
     onSetPhoto: (uri: Uri?, fromCamera: Boolean) -> Unit,
@@ -100,6 +105,7 @@ fun RecipeScreen(
     onTidyUp: () -> Unit = {},
     showBack: Boolean = true,
 ) {
+    val measures = remember(units, recipe.sourceUrl) { Measures.forRecipe(units, recipe.sourceUrl) }
     val base = recipe.servings
     var servings by rememberSaveable(recipe.id) { mutableIntStateOf(base ?: 0) }
     var gathered by rememberSaveable(recipe.id) { mutableStateOf(emptySet<Int>()) }
@@ -227,7 +233,7 @@ fun RecipeScreen(
             if (stillNeeded.isNotEmpty()) {
                 StickerButton(
                     onClick = {
-                        if (!sendingToList) onSendToList(stillNeeded.map { it.value.groceryParts(factor).let { (n, q) -> GroceryItem(n, q) } })
+                        if (!sendingToList) onSendToList(stillNeeded.map { it.value.groceryParts(factor, measures).let { (n, q) -> GroceryItem(n, q) } })
                     },
                     fill = Tin.Saffron,
                     minHeight = 44.dp,
@@ -255,22 +261,19 @@ fun RecipeScreen(
                     ) {
                         Text(
                             buildAnnotatedString {
-                                val q = ingredient.quantity
-                                if (ingredient.edited) {
-                                    append(ingredient.editedDisplay(factor))
-                                } else if (q == null || factor == 1.0) {
+                                // Scaled, converted or corrected lines are rebuilt with the amount in bold;
+                                // anything else shows exactly as the recipe had it.
+                                val shown = ingredient.forCard(factor, measures)
+                                if (shown == null) {
                                     append(ingredient.raw)
                                 } else {
-                                    val max = ingredient.quantityMax
-                                    val unit = ingredient.unit
-                                    val amount = buildString {
-                                        append(formatQuantity(q * factor))
-                                        if (max != null) append("–" + formatQuantity(max * factor))
-                                        if (unit != null) append(" " + pluralUnit(unit, (max ?: q) * factor))
+                                    val amount = shown.amountLabel()
+                                    if (!amount.isNullOrBlank()) {
+                                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(amount) }
+                                        append(" ")
                                     }
-                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(amount) }
-                                    append(" ${ingredient.name}")
-                                    ingredient.note?.let { append(", $it") }
+                                    append(shown.name)
+                                    shown.note?.let { append(", $it") }
                                 }
                             },
                             style = MaterialTheme.typography.bodyLarge,

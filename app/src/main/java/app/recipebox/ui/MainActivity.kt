@@ -46,6 +46,7 @@ import app.recipebox.ui.screens.RecipeScreen
 import app.recipebox.ui.screens.SavedSheet
 import app.recipebox.ui.screens.SettingsScreen
 import app.recipebox.ui.screens.TinScreen
+import app.recipebox.data.model.textIn
 import app.recipebox.ui.theme.RecipeBoxTheme
 
 class MainActivity : ComponentActivity() {
@@ -72,6 +73,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
     val justSaved by vm.justSaved.collectAsStateWithLifecycle()
     val hasClaudeKey by vm.hasClaudeKey.collectAsStateWithLifecycle()
     val sendingToList by vm.sendingToList.collectAsStateWithLifecycle()
+    val units by vm.units.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     LaunchedEffect(Unit) {
@@ -91,12 +93,15 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
         settings -> {
             val ogConnected by vm.ourGroceriesConnected.collectAsStateWithLifecycle()
             val ogEmail by vm.ourGroceriesEmail.collectAsStateWithLifecycle()
+            val unitsSetting by vm.units.collectAsStateWithLifecycle()
             val listName by vm.listName.collectAsStateWithLifecycle()
             val lessons by vm.lessons.collectAsStateWithLifecycle()
             SettingsScreen(
                 hasClaudeKey = hasClaudeKey,
                 ourGroceriesConnected = ogConnected,
                 ourGroceriesEmail = ogEmail,
+                units = unitsSetting,
+                onUnitsChange = vm::setUnits,
                 listName = listName,
                 snackbar = snackbar,
                 onBack = { settings = false },
@@ -134,7 +139,9 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                     val current = id?.let { openRecipe(vm, it) }
                     if (current != null) {
                         RecipeScreen(
-                            recipe = current,
+                            // Oven temperatures in the steps shown in the chosen units; the saved recipe is untouched.
+                            recipe = remember(current, units) { current.textIn(units) },
+                            units = units,
                             snackbar = snackbar,
                             onBack = { openId = null },
                             onCook = { cookServings = it; cooking = true },
@@ -159,15 +166,21 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
             BackHandler { if (cooking) cooking = false else openId = null }
             if (current != null) {
                 if (cooking) {
-                    CookScreen(current, onExit = { cooking = false }, factor = scaleFor(current, cookServings))
+                    CookScreen(
+                        remember(current, units) { current.textIn(units) },
+                        onExit = { cooking = false },
+                        factor = scaleFor(current, cookServings),
+                        units = units,
+                    )
                 } else {
                     RecipeScreen(
-                        recipe = current,
+                        recipe = remember(current, units) { current.textIn(units) },
+                        units = units,
                         snackbar = snackbar,
                         onBack = { openId = null },
                         onCook = { cookServings = it; cooking = true },
                         onSendToList = vm::sendToList,
-                            sendingToList = sendingToList,
+                        sendingToList = sendingToList,
                         onDelete = { vm.delete(id); openId = null },
                         onEditIngredient = { index, fixed -> vm.updateIngredient(current, index, fixed) },
                         onSetPhoto = { uri, camera -> vm.setPhoto(current, uri, camera) },

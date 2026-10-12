@@ -14,13 +14,38 @@ fun Ingredient.display(factor: Double = 1.0): String {
         (note?.let { ", $it" } ?: "")
 }
 
-/** Name and quantity for a shopping list: ("floury potatoes", "1 kg"), ("garlic", "2 cloves"). */
-fun Ingredient.groceryParts(factor: Double = 1.0): Pair<String, String?> {
-    val q = quantity ?: return name to amountText
-    val amount = q * factor
-    val qty = formatQuantity(amount) + (quantityMax?.let { "–" + formatQuantity(it * factor) } ?: "")
-    return name to listOfNotNull(qty, unit?.let { pluralUnit(it, quantityMax ?: amount) }).joinToString(" ")
+/**
+ * The line as it should be shown: amounts scaled by [factor] and, if [measures] is given,
+ * converted into that system. Null means "show the imported text exactly as it was":
+ * nothing to scale, convert or correct.
+ */
+fun Ingredient.forCard(factor: Double = 1.0, measures: Measures? = null): Ingredient? {
+    val q = quantity ?: return if (edited) this else null
+    val converted = measures?.let { convertAmount(q * factor, quantityMax?.times(factor), unit, name, it) }
+    if (converted == null && factor == 1.0 && !edited) return null
+    return converted?.let { copy(quantity = it.quantity, quantityMax = it.quantityMax, unit = it.unit) }
+        ?: copy(quantity = q * factor, quantityMax = quantityMax?.times(factor))
 }
+
+/** The amount and unit part of a line, already scaled and converted: "1¼ kg", "2 cloves". */
+fun Ingredient.amountLabel(): String? {
+    val q = quantity ?: return amountText
+    // Metric reads in decimals ("1.4 kg"); cups, spoons and ounces in fractions ("1⅓ cups").
+    val format: (Double) -> String = if (unit in decimalUnits) ::formatDecimal else ::formatQuantity
+    val qty = format(q) + (quantityMax?.let { "–" + format(it) } ?: "")
+    return listOfNotNull(qty, unit?.let { pluralUnit(it, quantityMax ?: q) }).joinToString(" ")
+}
+
+private val decimalUnits = setOf("g", "kg", "ml", "l")
+
+/** 1.4 → "1.4", 2.0 → "2", 450.0 → "450". */
+fun formatDecimal(value: Double): String =
+    if (value >= 10) value.roundToInt().toString()
+    else String.format(Locale.UK, "%.1f", value).trimEnd('0').trimEnd('.')
+
+/** Name and quantity for a shopping list: ("floury potatoes", "1 kg"), ("garlic", "2 cloves"). */
+fun Ingredient.groceryParts(factor: Double = 1.0, measures: Measures? = null): Pair<String, String?> =
+    name to (forCard(factor, measures) ?: this).amountLabel()
 
 private val countableUnits = setOf("clove", "stick", "rasher", "sprig", "tin", "slice", "handful", "bunch", "pinch", "cup")
 
@@ -124,9 +149,8 @@ fun Ingredient.editedDisplay(factor: Double = 1.0): String {
     return listOfNotNull(amount?.ifBlank { null }, u?.ifBlank { null }, name).joinToString(" ") + (note?.let { ", $it" } ?: "")
 }
 
-/** The line as the recipe card shows it: the user's fix, the scaled amount, or the original text. */
-fun Ingredient.lineFor(factor: Double = 1.0): String = when {
-    edited -> editedDisplay(factor)
-    quantity == null || factor == 1.0 -> raw
-    else -> display(factor)
-}
+/** The line as the recipe card shows it: the user's fix, the scaled or converted amount, or the original text. */
+fun Ingredient.lineFor(factor: Double = 1.0, measures: Measures? = null): String =
+    forCard(factor, measures)?.let { shown ->
+        listOfNotNull(shown.amountLabel()?.ifBlank { null }, shown.name).joinToString(" ") + (shown.note?.let { ", $it" } ?: "")
+    } ?: raw

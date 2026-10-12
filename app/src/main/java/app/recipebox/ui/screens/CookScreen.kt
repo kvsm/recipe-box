@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.recipebox.data.model.PrepTask
 import app.recipebox.data.model.Recipe
+import app.recipebox.data.model.Measures
+import app.recipebox.data.model.UnitSystem
 import app.recipebox.data.model.lineFor
 import app.recipebox.ui.components.LineIcons
 import app.recipebox.ui.components.RoundStickerButton
@@ -67,7 +69,7 @@ import kotlinx.coroutines.launch
  * has prep pulled forward, the first page is "Get ready".
  */
 @Composable
-fun CookScreen(recipe: Recipe, onExit: () -> Unit, factor: Double = 1.0) {
+fun CookScreen(recipe: Recipe, onExit: () -> Unit, factor: Double = 1.0, units: UnitSystem = UnitSystem.METRIC) {
     val steps = remember(recipe) { recipe.instructions.flatMap { it.steps } }
     val hasPrep = recipe.prep.isNotEmpty()
     val pageCount = steps.size + if (hasPrep) 1 else 0
@@ -172,7 +174,7 @@ fun CookScreen(recipe: Recipe, onExit: () -> Unit, factor: Double = 1.0) {
         if (wide) {
             // Tablet propped up on the worktop: ingredients stay in view beside the steps.
             Row(Modifier.fillMaxSize()) {
-                CookIngredients(recipe, factor, Modifier.width(340.dp).fillMaxHeight())
+                CookIngredients(recipe, factor, Measures.forRecipe(units, recipe.sourceUrl), Modifier.width(340.dp).fillMaxHeight())
                 Box(Modifier.width(2.dp).fillMaxHeight().background(Tin.InkLine))
                 stepsPane(Modifier.weight(1f))
             }
@@ -184,7 +186,7 @@ fun CookScreen(recipe: Recipe, onExit: () -> Unit, factor: Double = 1.0) {
 
 /** The tablet side panel: tick ingredients off as they go in. */
 @Composable
-private fun CookIngredients(recipe: Recipe, factor: Double, modifier: Modifier) {
+private fun CookIngredients(recipe: Recipe, factor: Double, measures: Measures, modifier: Modifier) {
     var used by rememberSaveable(recipe.id) { mutableStateOf(emptySet<Int>()) }
     Column(
         modifier
@@ -208,7 +210,7 @@ private fun CookIngredients(recipe: Recipe, factor: Double, modifier: Modifier) 
                 onCheckedChange = { used = if (it) used + i else used - i },
                 dark = true,
             ) {
-                Text(ingredient.lineFor(factor), style = MaterialTheme.typography.bodyLarge, color = Tin.Card)
+                Text(ingredient.lineFor(factor, measures), style = MaterialTheme.typography.bodyLarge, color = Tin.Card)
             }
         }
     }

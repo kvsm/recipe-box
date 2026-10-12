@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import app.recipebox.RecipeBoxApp
 import app.recipebox.data.model.Ingredient
 import app.recipebox.data.model.RawSnapshot
+import app.recipebox.data.model.UnitSystem
 import app.recipebox.data.model.Recipe
 import app.recipebox.groceries.GroceryItem
 import app.recipebox.groceries.GroceryRouter
@@ -82,6 +83,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _sendingToList = MutableStateFlow(false)
     /** True while items are on their way to OurGroceries, for the button's spinner. */
     val sendingToList = _sendingToList.asStateFlow()
+
+    private val settingsPrefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val _units = MutableStateFlow(
+        runCatching { UnitSystem.valueOf(settingsPrefs.getString(KEY_UNITS, null)!!) }.getOrDefault(UnitSystem.METRIC),
+    )
+    /** Metric or imperial, for showing amounts and oven temperatures. Metric unless changed. */
+    val units = _units.asStateFlow()
+
+    fun setUnits(system: UnitSystem) {
+        settingsPrefs.edit().putString(KEY_UNITS, system.name).apply()
+        _units.value = system
+    }
 
     private val _groceryFailure = MutableStateFlow<GroceryFailure?>(null)
     val groceryFailure = _groceryFailure.asStateFlow()
@@ -284,6 +297,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val KEY_SEEN = "seen"
+        const val KEY_UNITS = "units"
         val PENDING = setOf(WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED)
     }
 }
