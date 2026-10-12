@@ -37,8 +37,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.autofill.ContentDataType
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.platform.LocalAutofillManager
+import androidx.compose.ui.semantics.contentDataType
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
@@ -119,7 +121,8 @@ fun SettingsScreen(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     colors = fieldColours(),
-                    modifier = Modifier.fillMaxWidth(),
+                    // Not a login: keep password managers from filling the OurGroceries password in here.
+                    modifier = Modifier.fillMaxWidth().semantics { contentDataType = ContentDataType.None },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StickerButton(onClick = { onSaveClaudeKey(key); key = "" }, enabled = key.isNotBlank(), minHeight = 48.dp) {
