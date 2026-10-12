@@ -46,6 +46,7 @@ import app.recipebox.ui.screens.RecipeScreen
 import app.recipebox.ui.screens.SavedSheet
 import app.recipebox.ui.screens.SettingsScreen
 import app.recipebox.ui.screens.TinScreen
+import app.recipebox.data.model.Measures
 import app.recipebox.data.model.textIn
 import app.recipebox.ui.theme.RecipeBoxTheme
 
@@ -140,7 +141,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                     if (current != null) {
                         RecipeScreen(
                             // Oven temperatures in the steps shown in the chosen units; the saved recipe is untouched.
-                            recipe = remember(current, units) { current.textIn(units) },
+                            recipe = remember(current, units) { current.textIn(Measures.forRecipe(units, current.sourceUrl)) },
                             units = units,
                             snackbar = snackbar,
                             onBack = { openId = null },
@@ -167,14 +168,14 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
             if (current != null) {
                 if (cooking) {
                     CookScreen(
-                        remember(current, units) { current.textIn(units) },
+                        remember(current, units) { current.textIn(Measures.forRecipe(units, current.sourceUrl)) },
                         onExit = { cooking = false },
                         factor = scaleFor(current, cookServings),
                         units = units,
                     )
                 } else {
                     RecipeScreen(
-                        recipe = remember(current, units) { current.textIn(units) },
+                        recipe = remember(current, units) { current.textIn(Measures.forRecipe(units, current.sourceUrl)) },
                         units = units,
                         snackbar = snackbar,
                         onBack = { openId = null },

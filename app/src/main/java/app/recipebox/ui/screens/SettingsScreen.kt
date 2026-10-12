@@ -9,6 +9,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,6 +58,7 @@ import app.recipebox.ui.components.hardShadow
 import app.recipebox.ui.theme.Tin
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     hasClaudeKey: Boolean,
@@ -109,8 +112,12 @@ fun SettingsScreen(
             }
 
             Panel("Measurements") {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf(UnitSystem.METRIC to "Metric", UnitSystem.IMPERIAL to "Imperial").forEach { (system, label) ->
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf(
+                        UnitSystem.METRIC to "Metric",
+                        UnitSystem.IMPERIAL_UK to "Imperial (UK)",
+                        UnitSystem.IMPERIAL_US to "Imperial (US)",
+                    ).forEach { (system, label) ->
                         val selected = units == system
                         StickerButton(
                             onClick = { onUnitsChange(system) },
@@ -122,11 +129,11 @@ fun SettingsScreen(
                     }
                 }
                 Text(
-                    if (units == UnitSystem.METRIC) {
-                        "Grams, kilos, millilitres and litres, with oven temperatures in °C. Cups of flour, sugar and the like are shown as weights."
-                    } else {
-                        "Ounces, pounds and cups, with oven temperatures in °F."
-                    } + " Teaspoons and tablespoons stay as they are. Your recipes are kept as imported, so you can switch back any time.",
+                    when (units) {
+                        UnitSystem.METRIC -> "Grams, kilos, millilitres and litres, with oven temperatures in °C. Cups of flour, sugar and the like are shown as weights."
+                        UnitSystem.IMPERIAL_UK -> "Ounces and pounds, fluid ounces and British pints, with oven temperatures in °C. Cups of flour, sugar and the like are shown as weights."
+                        UnitSystem.IMPERIAL_US -> "Ounces, pounds and cups, with oven temperatures in °F."
+                    } + " Amounts in the method are converted too, with the original in brackets. Teaspoons and tablespoons stay as they are, and your recipes are kept as imported, so you can switch back any time.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Tin.Ink,
                 )

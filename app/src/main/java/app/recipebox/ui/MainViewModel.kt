@@ -86,7 +86,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settingsPrefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _units = MutableStateFlow(
-        runCatching { UnitSystem.valueOf(settingsPrefs.getString(KEY_UNITS, null)!!) }.getOrDefault(UnitSystem.METRIC),
+        when (val saved = settingsPrefs.getString(KEY_UNITS, null)) {
+            null -> UnitSystem.METRIC
+            "IMPERIAL" -> UnitSystem.IMPERIAL_US // the single imperial option before UK and US were split
+            else -> runCatching { UnitSystem.valueOf(saved) }.getOrDefault(UnitSystem.METRIC)
+        },
     )
     /** Metric or imperial, for showing amounts and oven temperatures. Metric unless changed. */
     val units = _units.asStateFlow()

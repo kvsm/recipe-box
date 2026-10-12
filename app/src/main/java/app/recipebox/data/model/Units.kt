@@ -5,8 +5,13 @@ import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-/** How amounts are shown. Recipes are stored as imported; conversion happens on the way to the screen. */
-enum class UnitSystem { METRIC, IMPERIAL }
+/**
+ * How amounts are shown. Recipes are stored as imported; conversion happens on the way to the screen.
+ *  - METRIC: g, kg, ml, l and °C.
+ *  - IMPERIAL_UK: oz and lb, fluid ounces and British pints, and °C (British ovens are Celsius).
+ *  - IMPERIAL_US: oz and lb, cups, and °F.
+ */
+enum class UnitSystem { METRIC, IMPERIAL_UK, IMPERIAL_US }
 
 /**
  * The settings for converting one recipe: the system to show, plus which flavour of
@@ -26,7 +31,7 @@ data class Measures(val system: UnitSystem, val britishVolumes: Boolean = false,
     }
 }
 
-/** Grams per cup for dry ingredients people weigh in metric. Checked in order, so "brown sugar" beats "sugar". */
+/** Grams per cup for dry ingredients people weigh rather than scoop. Checked in order, so "brown sugar" beats "sugar". */
 private val cupWeights: List<Pair<String, Double>> = listOf(
     "icing sugar" to 120.0, "powdered sugar" to 120.0, "confectioners" to 120.0,
     "brown sugar" to 200.0, "caster sugar" to 200.0, "granulated sugar" to 200.0, "sugar" to 200.0,
@@ -40,18 +45,8 @@ private val cupWeights: List<Pair<String, Double>> = listOf(
 private const val G_PER_OZ = 28.3495
 private const val G_PER_LB = 453.592
 private const val G_PER_BUTTER_STICK = 113.0
-
-/** Millilitres for a volume unit, or null if it isn't one we convert. tsp and tbsp are left alone in both systems. */
-private fun mlPer(unit: String, m: Measures): Double? = when (unit) {
-    "ml" -> 1.0
-    "l" -> 1000.0
-    "cup" -> m.cupMl
-    "fl oz" -> if (m.britishVolumes) 28.413 else 29.5735
-    "pint" -> if (m.britishVolumes) 568.261 else 473.176
-    "quart" -> if (m.britishVolumes) 1136.52 else 946.353
-    "gallon" -> if (m.britishVolumes) 4546.09 else 3785.41
-    else -> null
-}
+private const val UK_PINT_ML = 568.261
+private const val UK_FL_OZ_ML = 28.413
 
 private fun gramsPer(unit: String): Double? = when (unit) {
     "g" -> 1.0
@@ -61,43 +56,70 @@ private fun gramsPer(unit: String): Double? = when (unit) {
     else -> null
 }
 
-private val metricUnits = setOf("g", "kg", "ml", "l")
-private val imperialUnits = setOf("oz", "lb", "cup", "fl oz", "pint", "quart", "gallon")
+/** Millilitres for a volume unit, or null if it isn't one we convert. tsp and tbsp are left alone in every system. */
+private fun mlPer(unit: String, m: Measures): Double? = when (unit) {
+    "ml" -> 1.0
+    "l" -> 1000.0
+    "cup" -> m.cupMl
+    "fl oz" -> if (m.britishVolumes) UK_FL_OZ_ML else 29.5735
+    "pint" -> if (m.britishVolumes) UK_PINT_ML else 473.176
+    "quart" -> if (m.britishVolumes) 1136.52 else 946.353
+    "gallon" -> if (m.britishVolumes) 4546.09 else 3785.41
+    else -> null
+}
+
+private val britishOrAmericanVolumes = setOf("fl oz", "pint", "quart", "gallon")
 
 /** An amount converted for display: low end, optional high end, and unit. */
 data class Converted(val quantity: Double, val quantityMax: Double?, val unit: String)
 
 /**
  * Converts [quantity] (and [quantityMax]) of [unit] into [measures]' system, rounded to
- * kitchen-friendly numbers. Returns null when nothing needs converting: already in the
- * right system, a spoon measure, or a count like "2 cloves".
+ * kitchen-friendly numbers. [name] is what's being measured, which decides whether cups
+ * become a weight ("flour") or a volume ("milk"). Returns null when nothing needs
+ * converting: already in the right units, a spoon measure, or a count like "2 cloves".
  */
 fun convertAmount(quantity: Double, quantityMax: Double?, unit: String?, name: String, measures: Measures): Converted? {
     val u = unit?.lowercase() ?: return null
-    val lowerName = name.lowercase()
+    val butter = "butter" in name.lowercase()
+    fun g(perUnit: Double) = Pair(quantity * perUnit, quantityMax?.times(perUnit))
+
     return when (measures.system) {
         UnitSystem.METRIC -> {
-            if (u in metricUnits) return null
-            // A stick of butter is a weight in disguise.
-            if (u == "stick" && "butter" in lowerName) return grams(quantity * G_PER_BUTTER_STICK, quantityMax?.times(G_PER_BUTTER_STICK))
-            gramsPer(u)?.let { return grams(quantity * it, quantityMax?.times(it)) }
+            if (u in setOf("g", "kg", "ml", "l")) return null
+            if (u == "stick" && butter) return g(G_PER_BUTTER_STICK).let { (a, b) -> grams(a, b) }
+            gramsPer(u)?.let { return g(it).let { (a, b) -> grams(a, b) } }
             val ml = mlPer(u, measures) ?: return null
             // Cups of flour and the like are weighed in metric kitchens, not poured.
-            if (u == "cup") {
-                cupWeights.firstOrNull { (key, _) -> key in lowerName }?.let { (_, perCup) ->
-                    val perMl = perCup / measures.cupMl
-                    return grams(quantity * ml * perMl, quantityMax?.times(ml * perMl))
-                }
-            }
+            cupWeight(u, name, measures)?.let { perMl -> return grams(quantity * ml * perMl, quantityMax?.times(ml * perMl)) }
             millilitres(quantity * ml, quantityMax?.times(ml))
         }
-        UnitSystem.IMPERIAL -> {
-            if (u in imperialUnits) return null
-            gramsPer(u)?.let { return ounces(quantity * it, quantityMax?.times(it)) }
+        UnitSystem.IMPERIAL_UK -> {
+            if (u == "oz" || u == "lb") return null
+            if (u == "stick" && butter) return g(G_PER_BUTTER_STICK).let { (a, b) -> ounces(a, b) }
+            gramsPer(u)?.let { return g(it).let { (a, b) -> ounces(a, b) } }
+            // British pints and fluid ounces are already right; American ones aren't.
+            if (u in britishOrAmericanVolumes && measures.britishVolumes) return null
+            val ml = mlPer(u, measures) ?: return null
+            cupWeight(u, name, measures)?.let { perMl -> return ounces(quantity * ml * perMl, quantityMax?.times(ml * perMl)) }
+            britishVolume(quantity * ml, quantityMax?.times(ml))
+        }
+        UnitSystem.IMPERIAL_US -> {
+            if (u in setOf("oz", "lb", "cup", "stick")) return null
+            gramsPer(u)?.let { return g(it).let { (a, b) -> ounces(a, b) } }
+            // American pints and fluid ounces are already right; British ones aren't.
+            if (u in britishOrAmericanVolumes && !measures.britishVolumes) return null
             val ml = mlPer(u, measures) ?: return null
             cups(quantity * ml, quantityMax?.times(ml))
         }
     }
+}
+
+/** Grams per millilitre if [unit] is cups of something usually weighed, else null. */
+private fun cupWeight(unit: String, name: String, measures: Measures): Double? {
+    if (unit != "cup") return null
+    val lower = name.lowercase()
+    return cupWeights.firstOrNull { (key, _) -> key in lower }?.let { (_, perCup) -> perCup / measures.cupMl }
 }
 
 private fun grams(g: Double, gMax: Double?): Converted {
@@ -122,15 +144,29 @@ private fun ounces(g: Double, gMax: Double?): Converted {
     }
 }
 
-/** Small amounts as spoons (fine in either system), bigger ones in cups to the nearest handy fraction. */
+/** Spoons for small amounts (fine in any system), then cups to the nearest handy fraction. */
 private fun cups(ml: Double, mlMax: Double?): Converted {
     val top = mlMax ?: ml
     val cup = Measures.US_CUP_ML
-    return when {
-        top < 15 -> Converted(roundTo(ml / 5, 0.25), mlMax?.let { roundTo(it / 5, 0.25) }, "tsp")
-        top < cup / 4 -> Converted(roundTo(ml / 15, 0.5), mlMax?.let { roundTo(it / 15, 0.5) }, "tbsp")
-        else -> Converted(roundCups(ml / cup), mlMax?.let { roundCups(it / cup) }, "cup")
+    return spoons(ml, mlMax, top, below = cup / 4)
+        ?: Converted(roundCups(ml / cup), mlMax?.let { roundCups(it / cup) }, "cup")
+}
+
+/** Spoons for small amounts, then fluid ounces, then British pints from half a pint up. */
+private fun britishVolume(ml: Double, mlMax: Double?): Converted {
+    val top = mlMax ?: ml
+    spoons(ml, mlMax, top, below = 45.0)?.let { return it }
+    return if (top >= UK_PINT_ML / 2) Converted(roundTo(ml / UK_PINT_ML, 0.25), mlMax?.let { roundTo(it / UK_PINT_ML, 0.25) }, "pint")
+    else {
+        fun floz(v: Double) = (v / UK_FL_OZ_ML).let { if (it < 4) roundTo(it, 0.5) else roundTo(it, 1.0) }
+        Converted(floz(ml), mlMax?.let(::floz), "fl oz")
     }
+}
+
+private fun spoons(ml: Double, mlMax: Double?, top: Double, below: Double): Converted? = when {
+    top < 15 -> Converted(roundTo(ml / 5, 0.25), mlMax?.let { roundTo(it / 5, 0.25) }, "tsp")
+    top < below -> Converted(roundTo(ml / 15, 0.5), mlMax?.let { roundTo(it / 15, 0.5) }, "tbsp")
+    else -> null
 }
 
 /** 7 → 7, 23 → 25, 237 → 240, 3.3 → 3.5. Precise enough to cook with, without false precision. */
@@ -139,7 +175,7 @@ private fun roundMetric(v: Double): Double = when {
     v < 20 -> roundTo(v, 1.0)
     v < 100 -> roundTo(v, 5.0)
     else -> roundTo(v, 10.0)
-}.coerceAtLeast(if (v > 0) 0.5 else 0.0)
+}
 
 private val cupFractions = listOf(0.0, 0.25, 1.0 / 3, 0.5, 2.0 / 3, 0.75, 1.0)
 
@@ -151,27 +187,71 @@ private fun roundCups(v: Double): Double {
 
 private fun roundTo(v: Double, step: Double): Double = ((v / step).roundToInt() * step).let { if (it == 0.0 && v > 0) step else it }
 
-// ---------- Temperatures in method text ----------
+/** "450 g", "1.4 kg", "2 cups", "7 fl oz": metric in decimals, everything else in fractions. */
+fun formatAmount(c: Converted): String {
+    val format: (Double) -> String = if (c.unit in setOf("g", "kg", "ml", "l")) ::formatDecimal else ::formatQuantity
+    val qty = format(c.quantity) + (c.quantityMax?.let { "–" + format(it) } ?: "")
+    return "$qty ${pluralUnit(c.unit, c.quantityMax ?: c.quantity)}"
+}
+
+// ---------- Amounts and temperatures in method text ----------
+
+private const val NUM = """(?:\d+\s+\d+/\d+|\d+/\d+|\d+(?:\.\d+)?[½¼¾⅓⅔]?|[½¼¾⅓⅔])"""
+
+private val textUnits = mapOf(
+    "g" to "g", "gram" to "g", "grams" to "g", "kg" to "kg", "kilo" to "kg", "kilos" to "kg", "kilogram" to "kg", "kilograms" to "kg",
+    "ml" to "ml", "millilitre" to "ml", "millilitres" to "ml", "milliliter" to "ml", "milliliters" to "ml",
+    "l" to "l", "litre" to "l", "litres" to "l", "liter" to "l", "liters" to "l",
+    "oz" to "oz", "ounce" to "oz", "ounces" to "oz", "lb" to "lb", "lbs" to "lb", "pound" to "lb", "pounds" to "lb",
+    "cup" to "cup", "cups" to "cup", "pint" to "pint", "pints" to "pint", "quart" to "quart", "quarts" to "quart",
+    "stick" to "stick", "sticks" to "stick",
+)
+
+/**
+ * An amount and unit in running text: "200g", "1 1/2 cups", "2–3 lb", "4 fl oz".
+ * Skipped when it's already paired with a conversion, as in "200g (7oz)" or "200g/7oz",
+ * so the recipe's own conversions aren't doubled up.
+ */
+private val textAmount = Regex(
+    """(?<![\w.(/])(?<![(/]\s)($NUM)(?:\s*(?:-|–|to)\s*($NUM))?\s*(fl\.?\s?oz|""" +
+        textUnits.keys.sortedByDescending { it.length }.joinToString("|") +
+        """)\b(?!\s*[(/])""",
+    RegexOption.IGNORE_CASE,
+)
+
+/** "2 cups flour" → "250 g (2 cups) flour", in [measures]' system. Spoons and counts are left alone. */
+fun convertAmountsInText(text: String, measures: Measures): String = textAmount.replace(text) { m ->
+    val low = parseAmountNumber(m.groupValues[1]) ?: return@replace m.value
+    val high = m.groupValues[2].takeIf { it.isNotEmpty() }?.let { parseAmountNumber(it) ?: return@replace m.value }
+    val rawUnit = m.groupValues[3].lowercase()
+    val unit = if (rawUnit.startsWith("fl")) "fl oz" else textUnits[rawUnit] ?: return@replace m.value
+    // What's being measured, for cups of flour vs cups of milk: the next few words, up to any punctuation.
+    val what = text.substring(m.range.last + 1).split(',', '.', ';', ':', '(').first()
+        .trim().split(Regex("\\s+")).take(4).joinToString(" ")
+    val converted = convertAmount(low, high, unit, what, measures) ?: return@replace m.value
+    "${formatAmount(converted)} (${m.value.trim()})"
+}
 
 private val temperature = Regex(
-    """(?<![\d.(])(\d{2,3})\s*(?:°\s*|º\s*|degrees?\s+)?(C|F|Celsius|Fahrenheit|centigrade)\b(?!\s*\()""",
+    """(?<![\d.(])(\d{2,3})\s*(?:°\s*|º\s*|degrees?\s+)?(C|F|Celsius|Fahrenheit|centigrade)\b(?!\s*[(/])""",
     RegexOption.IGNORE_CASE,
 )
 
 /**
- * Converts cooking temperatures in step text to [system], keeping the original in brackets:
- * "Bake at 350°F" → "Bake at 180°C (350°F)". Only numbers written with a C/F marker are touched,
- * so step numbers and times are safe. Temperatures already in the right scale are left as they are.
+ * Converts cooking temperatures in step text, keeping the original in brackets:
+ * "Bake at 350°F" → "Bake at 180°C (350°F)". Metric and UK imperial use °C, US imperial °F.
+ * Only numbers written with a C/F marker are touched, so step numbers and times are safe.
  */
 fun convertTemperatures(text: String, system: UnitSystem): String = temperature.replace(text) { m ->
     val value = m.groupValues[1].toInt()
     val fahrenheit = m.groupValues[2].first().uppercaseChar() == 'F'
+    val wantFahrenheit = system == UnitSystem.IMPERIAL_US
     when {
-        system == UnitSystem.METRIC && fahrenheit && value in 150..550 -> {
+        !wantFahrenheit && fahrenheit && value in 150..550 -> {
             val c = ((value - 32) * 5.0 / 9 / 10).roundToInt() * 10
             "$c°C (${m.value.trim()})"
         }
-        system == UnitSystem.IMPERIAL && !fahrenheit && value in 60..290 -> {
+        wantFahrenheit && !fahrenheit && value in 60..290 -> {
             val f = ((value * 9.0 / 5 + 32) / 25).roundToInt() * 25
             "$f°F (${m.value.trim()})"
         }
@@ -179,9 +259,13 @@ fun convertTemperatures(text: String, system: UnitSystem): String = temperature.
     }
 }
 
-/** The recipe's step and Get ready text with temperatures in [system]. Ingredients are converted line by line instead. */
-fun Recipe.textIn(system: UnitSystem): Recipe = copy(
-    instructions = instructions.map { s -> s.copy(steps = s.steps.map { convertTemperatures(it, system) }) },
-    originalInstructions = originalInstructions.map { s -> s.copy(steps = s.steps.map { convertTemperatures(it, system) }) },
-    prep = prep.map { it.copy(text = convertTemperatures(it.text, system)) },
+/** Step text in [measures]' units: amounts and oven temperatures. */
+fun convertText(text: String, measures: Measures): String =
+    convertTemperatures(convertAmountsInText(text, measures), measures.system)
+
+/** The recipe's step and Get ready text in [measures]' units. Ingredients are converted line by line instead. */
+fun Recipe.textIn(measures: Measures): Recipe = copy(
+    instructions = instructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures) }) },
+    originalInstructions = originalInstructions.map { s -> s.copy(steps = s.steps.map { convertText(it, measures) }) },
+    prep = prep.map { it.copy(text = convertText(it.text, measures)) },
 )

@@ -47,7 +47,7 @@ fun formatDecimal(value: Double): String =
 fun Ingredient.groceryParts(factor: Double = 1.0, measures: Measures? = null): Pair<String, String?> =
     name to (forCard(factor, measures) ?: this).amountLabel()
 
-private val countableUnits = setOf("clove", "stick", "rasher", "sprig", "tin", "slice", "handful", "bunch", "pinch", "cup")
+private val countableUnits = setOf("clove", "stick", "rasher", "sprig", "tin", "slice", "handful", "bunch", "pinch", "cup", "pint", "quart", "gallon")
 
 /** "2 clove" reads wrong on a shopping list; "2 cloves" doesn't. Weights and volumes stay as they are. */
 fun pluralUnit(unit: String, amount: Double): String {
