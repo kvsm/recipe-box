@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathMeasure
@@ -150,13 +151,16 @@ fun StickerButton(
         label = "press",
     )
 
+    // Disabled buttons are drawn in washed-out solid colours rather than faded with alpha: an alpha
+    // layer is clipped to the button's bounds, which slices off the hard shadow drawn outside them.
+    fun shown(color: Color) = if (enabled) color else lerp(color, Tin.Paper, 0.55f)
+
     Row(
         modifier = modifier
-            .alpha(if (enabled) 1f else 0.45f)
             .offset(press, press)
-            .hardShadow(shape, shadow, shadowOffset - press)
-            .background(fill, shape)
-            .border(2.dp, outline, shape)
+            .hardShadow(shape, shown(shadow), shadowOffset - press)
+            .background(shown(fill), shape)
+            .border(2.dp, shown(outline), shape)
             .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button) {
                 haptics.tick()
                 onClick()
@@ -167,8 +171,8 @@ fun StickerButton(
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
     ) {
         CompositionLocalProvider(
-            LocalContentColor provides contentColor,
-            LocalTextStyle provides MaterialTheme.typography.labelLarge.copy(color = contentColor),
+            LocalContentColor provides shown(contentColor),
+            LocalTextStyle provides MaterialTheme.typography.labelLarge.copy(color = shown(contentColor)),
         ) { content() }
     }
 }
