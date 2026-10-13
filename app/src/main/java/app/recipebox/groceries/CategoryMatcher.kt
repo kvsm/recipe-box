@@ -82,7 +82,8 @@ class CategoryMatcher(context: Context, private val claude: ClaudeClient, privat
         val unknown = items.map { it.name.lowercase() }.filter { it !in result }.distinct()
         if (unknown.isNotEmpty() && claude.hasKey()) {
             try {
-                val fromClaude = askClaude(unknown, categories).filterValues { it.lowercase() in byLower }
+                val inUse = history.values.mapNotNull { byLower[it.lowercase()] }.toSet()
+                val fromClaude = askClaude(unknown, categories, inUse).filterValues { it.lowercase() in byLower }
                 result += fromClaude
                 claudeKeys += fromClaude.keys
             } catch (e: CancellationException) {
@@ -164,7 +165,7 @@ class CategoryMatcher(context: Context, private val claude: ClaudeClient, privat
                 .trim()
     }
 
-    private suspend fun askClaude(items: List<String>, categories: List<String>): Map<String, String> {
+    private suspend fun askClaude(items: List<String>, categories: List<String>, inUse: Set<String>): Map<String, String> {
         val tool = buildJsonObject {
             put("name", "assign_categories")
             put("description", "Assign each shopping item to one of the user's existing categories.")
@@ -200,14 +201,17 @@ class CategoryMatcher(context: Context, private val claude: ClaudeClient, privat
                 put("type", "text")
                 put(
                     "text",
-                    "Categories: ${categories.joinToString(" | ")}\n\nItems:\n" + items.joinToString("\n") { "- $it" },
+                    "Categories: ${categories.joinToString(" | ")}\n\n" +
+                        (if (inUse.isNotEmpty()) "Categories the user actually files things in: ${inUse.joinToString(" | ")}\n\n" else "") +
+                        "Items:\n" + items.joinToString("\n") { "- $it" },
                 )
             }
         }
         val system = """
             Put each shopping item in the supermarket category where it would be found, choosing only from the user's
             existing categories. Some categories are shop names or non-food; ignore those for food. When two categories
-            overlap (for example "Fruit & Veg" and "Produce"), pick the more specific or more grocery-like one consistently.
+            overlap (for example "Fruit & Veg" and "Produce"), pick the one the user actually files things in, if you're told;
+            otherwise the more specific or more grocery-like one, consistently.
             Use an empty string if nothing fits. Return every item exactly as given.
         """.trimIndent()
 
@@ -224,8 +228,16 @@ class CategoryMatcher(context: Context, private val claude: ClaudeClient, privat
 /** Offline fallback: common ingredients → likely category names, used only if the user has that category. */
 internal object KeywordCategories {
     private val rules: List<Pair<List<String>, List<String>>> = listOf(
+        // Checked first: things named after another ingredient but sold elsewhere. "chicken stock" isn't
+        // meat, "coconut milk" isn't dairy, "sundried tomatoes" aren't a dried spice. (From the first lessons export.)
+        listOf("stock", "bouillon", "gravy")
+            to listOf("Canned/Dry Goods", "Pantry"),
+        listOf("coconut milk", "coconut cream")
+            to listOf("Canned/Dry Goods", "International Foods", "Pantry"),
+        listOf("sundried tomato", "sun-dried tomato", "sun dried tomato")
+            to listOf("Fruit & Veg", "Produce"),
         listOf("ground ", "black pepper", "white pepper", "dried ", "paprika", "cumin", "turmeric", "cinnamon", "nutmeg",
-            "oregano", "chilli flakes", "chili flakes", "garam masala", "curry powder", "bay leaves", "stock cube")
+            "oregano", "chilli flakes", "chili flakes", "garam masala", "curry powder", "bay leaves")
             to listOf("Herbs & Spices", "Pantry"),
         listOf("beef", "chicken", "pork", "lamb", "mince", "bacon", "sausage", "chorizo", "steak", "ham", "turkey", "venison")
             to listOf("Meat"),
@@ -234,7 +246,7 @@ internal object KeywordCategories {
         listOf("milk", "butter", "cheese", "cheddar", "parmesan", "cream", "yoghurt", "yogurt", "crème fraîche",
             "creme fraiche", "egg", "mozzarella", "feta")
             to listOf("Dairy", "Chilled"),
-        listOf("flour", "sugar", "baking powder", "bicarbonate", "yeast", "cocoa", "vanilla", "icing")
+        listOf("flour", "sugar", "baking powder", "bicarbonate", "yeast", "cocoa", "vanilla", "icing", "pastry")
             to listOf("Baking", "Baking & Food Prep", "Pantry"),
         listOf("tinned", "tin of", "canned", "chickpeas", "kidney beans", "lentils", "rice", "pasta", "spaghetti",
             "noodles", "stock", "passata", "chopped tomatoes", "coconut milk", "oats")
@@ -247,7 +259,8 @@ internal object KeywordCategories {
             to listOf("Frozen Food"),
         listOf("potato", "onion", "garlic", "carrot", "leek", "pepper", "tomato", "lettuce", "spinach", "mushroom",
             "courgette", "aubergine", "broccoli", "cabbage", "celery", "cucumber", "lemon", "lime", "apple", "banana",
-            "ginger", "coriander", "parsley", "basil", "mint", "chilli", "spring onion", "avocado", "squash", "kale")
+            "ginger", "coriander", "parsley", "basil", "mint", "chilli", "chili", "spring onion", "avocado", "squash", "kale",
+            "galangal", "lemongrass", "lime leaves", "cilantro", "green onion", "shallot")
             to listOf("Fruit & Veg", "Produce"),
     )
 

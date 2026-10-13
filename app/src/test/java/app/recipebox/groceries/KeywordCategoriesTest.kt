@@ -19,4 +19,26 @@ class KeywordCategoriesTest {
     @Test fun `never invents a category`() {
         assertNull(KeywordCategories.guess("salmon fillets", kevs))
     }
+
+    /** Lines and categories from the first lessons export (docs/lessons.md). */
+    private val fromLessons = listOf(
+        "Bakery", "Baking", "Baking & Food Prep", "Bread", "Canned/Dry Goods", "Chilled", "Condiments", "Dairy", "Drinks",
+        "Fish", "Frozen Food", "Fruit & Veg", "Herbs & Spices", "International Foods", "Meat", "Pantry", "Produce", "Seafood",
+    ).associateBy { it.lowercase() }
+
+    @Test fun `things named after another ingredient go where they're sold`() {
+        assertEquals("Canned/Dry Goods", KeywordCategories.guess("chicken stock", fromLessons))
+        assertEquals("Canned/Dry Goods", KeywordCategories.guess("beef stock cubes", fromLessons))
+        assertEquals("Canned/Dry Goods", KeywordCategories.guess("coconut milk", fromLessons))
+        assertEquals("Fruit & Veg", KeywordCategories.guess("sundried tomatoes", fromLessons))
+    }
+
+    @Test fun `gaps from the lessons are filled`() {
+        assertEquals("Fruit & Veg", KeywordCategories.guess("galangal", fromLessons))
+        assertEquals("Fruit & Veg", KeywordCategories.guess("thai chilies", fromLessons))
+        assertEquals("Fruit & Veg", KeywordCategories.guess("lemongrass", fromLessons))
+        assertEquals("Baking", KeywordCategories.guess("puff pastry", fromLessons))
+        // Spices are still spices.
+        assertEquals("Herbs & Spices", KeywordCategories.guess("chilli flakes", fromLessons))
+    }
 }

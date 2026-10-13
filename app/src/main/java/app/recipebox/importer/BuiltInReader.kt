@@ -76,12 +76,17 @@ object BuiltInReader {
     private val emoji = Regex("""[\p{So}\p{Cs}️‍]""")
     private val spaces = Regex("""\s+""")
     private val sentence = Regex("""(?<=[.!?])\s+(?=[A-Z])""")
+    /** Phone status bar text in a screenshot: the clock ("14:25"), signal and battery ("ll59", "87%"). */
+    private val statusBar = Regex("""^(?:\d{1,2}:\d{2}(?:\s*[ap]m)?|[\dl|.:%]{2,6})$""", RegexOption.IGNORE_CASE)
+    /** "1egg beaten": a number run into a word that isn't a unit. */
+    private val joinedNumber = Regex("""^(\d+)([A-Za-z]{2,})\b""")
+    private val unitsAfterNumbers = setOf("g", "kg", "ml", "l", "oz", "lb", "lbs", "tsp", "tbsp", "cm", "mm", "cl", "x")
 
     /** Returns schema.org JSON, or null if no recipe could be found. */
     fun fromText(text: String, fallbackTitle: String? = null): JsonObject? {
         val lines = text.lines()
             .map { it.replace(emoji, "").replace(spaces, " ").trim() }
-            .filterNot { it.isEmpty() || hashtagLine.matches(it) }
+            .filterNot { it.isEmpty() || hashtagLine.matches(it) || statusBar.matches(it) }
             .map { it.replace(hashtags, "").trim() }
             .filter { it.isNotEmpty() }
         if (lines.isEmpty()) return null
@@ -94,24 +99,26 @@ object BuiltInReader {
         if (ingStart >= 0) {
             val ingEnd = listOf(methodStart.takeIf { it > ingStart }, stopIndex(lines, ingStart + 1))
                 .filterNotNull().minOrNull() ?: lines.size
-            ingredients = lines.subList(ingStart + 1, ingEnd).map(::clean).filter { it.isNotEmpty() }
+            ingredients = lines.subList(ingStart + 1, ingEnd).map(::cleanIngredient).filter { it.isNotEmpty() }
             steps = if (methodStart > ingStart) {
-                lines.subList(methodStart + 1, stopIndex(lines, methodStart + 1) ?: lines.size).map(::clean)
+                lines.subList(methodStart + 1, stopIndex(lines, methodStart + 1) ?: lines.size).map(::cleanStep)
             } else {
                 // No method heading: whatever follows the ingredients that reads like instructions.
-                lines.subList(ingEnd, lines.size).takeWhile { !stopHeading.containsMatchIn(it) }.map(::clean)
+                lines.subList(ingEnd, lines.size).takeWhile { !stopHeading.containsMatchIn(it) }.map(::cleanStep)
             }
         } else {
             // No headings: the longest run of ingredient-looking lines is the ingredient list.
             val run = longestIngredientRun(lines) ?: return null
-            ingredients = lines.subList(run.first, run.last + 1).map(::clean)
-            steps = lines.subList(run.last + 1, lines.size).takeWhile { !stopHeading.containsMatchIn(it) }.map(::clean)
+            ingredients = lines.subList(run.first, run.last + 1).map(::cleanIngredient)
+            steps = lines.subList(run.last + 1, lines.size).takeWhile { !stopHeading.containsMatchIn(it) }.map(::cleanStep)
         }
 
-        val method = steps.filter { it.isNotEmpty() }.flatMap { splitLongStep(it) }
+        val method = joinWrappedLines(steps.filter { it.isNotEmpty() }).flatMap { splitLongStep(it) }
         if (ingredients.size < 2 || method.isEmpty()) return null
 
-        val firstLine = lines.first().takeIf { it.length in 3..80 && it.indexOf(':') < 0 && !looksLikeIngredient.containsMatchIn(it) }
+        val firstLine = lines.first().takeIf {
+            it.length in 3..80 && it.indexOf(':') < 0 && !looksLikeIngredient.containsMatchIn(it) && !serves.containsMatchIn(it)
+        }
         val title = firstLine?.takeIf { ingStart != 0 } ?: fallbackTitle ?: "Untitled recipe"
         return schema(title, ingredients, method, textForTimes = text)
     }
@@ -120,6 +127,28 @@ object BuiltInReader {
         (from until lines.size).firstOrNull { stopHeading.containsMatchIn(lines[it]) }
 
     private fun clean(line: String): String = line.replace(bullet, "").trim().trimEnd(',')
+
+    /** Step lines keep a trailing comma: it shows the step carries on to the next line. */
+    private fun cleanStep(line: String): String = line.replace(bullet, "").trim()
+
+    private fun cleanIngredient(line: String): String = clean(line).replace(joinedNumber) { m ->
+        if (m.groupValues[2].lowercase() in unitsAfterNumbers) m.value else "${m.groupValues[1]} ${m.groupValues[2]}"
+    }
+
+    /**
+     * Rejoins a step that the screen (or a caption) broke across lines: a line that starts in lower
+     * case, or follows one ending in a comma, continues the one before. "…add the" + "chicken. Fry…"
+     * is one step. A line starting with a capital after a full stop (or no stop) is a new step.
+     */
+    private fun joinWrappedLines(lines: List<String>): List<String> {
+        val out = mutableListOf<String>()
+        lines.forEach { line ->
+            val previous = out.lastOrNull()
+            val continues = previous != null && (line.first().isLowerCase() || previous.endsWith(","))
+            if (continues) out[out.lastIndex] = "$previous $line" else out += line
+        }
+        return out
+    }
 
     private fun longestIngredientRun(lines: List<String>): IntRange? {
         var best: IntRange? = null

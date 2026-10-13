@@ -167,8 +167,9 @@ class HeuristicPrepTest {
 
 class LessonLogTest {
     @Test fun `flags real disagreements only`() {
-        val parser = IngredientParser.parse("2 medium onions, finely chopped")
-        val claude = parser.copy(name = "onions", note = "medium, finely chopped")
+        // A line the parser still misreads: one amount shared between several spices.
+        val parser = IngredientParser.parse("2 tbsp EACH: Paprika, Cumin, Chilli Powder")
+        val claude = parser.copy(name = "paprika", note = "each of paprika, cumin and chilli powder")
         assertTrue(LessonLog.differs(parser, claude))
         assertTrue(!LessonLog.differs(parser, parser.copy(name = "Medium Onions", note = "something else")))
     }
@@ -281,3 +282,132 @@ class BuiltInReaderTest {
         assertNull(BuiltInReader.fromText("What a gorgeous sunset tonight 🌅\n#nofilter"))
     }
 }
+
+/** Patterns from the first lessons export (docs/lessons.md), tested with the real lines. */
+class ParserLessonsTest {
+    private fun p(line: String) = IngredientParser.parse(line)
+
+    @Test fun `brackets are notes and don't split the line`() {
+        val stock = p("2 cups chicken stock (unsalted, preferably homemade)")
+        assertEquals("chicken stock", stock.name)
+        assertEquals("unsalted, preferably homemade", stock.note)
+        assertEquals("coconut milk", p("1 ½ cups coconut milk ((see note 1))").name)
+        assertEquals("see note 1", p("1 ½ cups coconut milk ((see note 1))").note)
+        val chicken = p("1 lb chicken thigh (boneless skinless, cut 1-inch pieces (see note 2))")
+        assertEquals("chicken thigh", chicken.name)
+        assertEquals("oyster mushrooms", p("5.5 oz oyster mushrooms (torn into bite-size pieces)").name)
+        assertEquals("Thai chilies", p("1-3 Thai chilies (to taste, smashed until broken or cut into large pieces)").name)
+    }
+
+    @Test fun `describing words go in the note`() {
+        val onion = p("1 large White Onion, (finely diced)")
+        assertEquals("white onion", onion.name)
+        assertEquals("large, finely diced", onion.note)
+        val garlic = p("3 large cloves of Garlic, (finely diced)")
+        assertEquals("garlic", garlic.name)
+        assertEquals("clove", garlic.unit)
+        assertEquals(3.0, garlic.quantity!!, 0.001)
+        val puree = p("2 heaped tbsp Tomato Puree ((Tomato Paste in US))")
+        assertEquals("tomato puree", puree.name)
+        assertEquals("tbsp", puree.unit)
+        val galangal = p("12 thin slices galangal ((see note 3))")
+        assertEquals("galangal", galangal.name)
+        assertEquals("slice", galangal.unit)
+    }
+
+    @Test fun `prep words without a comma go in the note`() {
+        assertEquals("onion", p("1 onion finely sliced").name)
+        assertEquals("finely sliced", p("1 onion finely sliced").note)
+        assertEquals("garlic", p("3 cloves of garlic finely chopped").name)
+        assertEquals("sundried tomatoes", p("10 sundried tomatoes finely chopped").name)
+        assertEquals("cheddar cheese", p("50g finely grated cheddar cheese").name)
+        assertEquals("egg", p("1 egg beaten").name)
+        assertEquals("palm sugar", p("1 tsp finely chopped palm sugar ( or granulated sugar)").name)
+        // Things you buy chopped or minced keep their names.
+        assertEquals("chopped tomatoes", p("400g chopped tomatoes").name)
+    }
+
+    @Test fun `two amounts are read as the metric one`() {
+        val beef = p("2.2lbs / 1kg Ground/Minced Beef ((see notes))")
+        assertEquals(1.0, beef.quantity!!, 0.001)
+        assertEquals("kg", beef.unit)
+        assertEquals("ground/minced beef", beef.name)
+        val wine = p("1 cup / 240ml Red Wine, ((see notes))")
+        assertEquals(240.0, wine.quantity!!, 0.001)
+        assertEquals("ml", wine.unit)
+        assertEquals("red wine", wine.name)
+        val tomatoes = p("2x 14oz/400g cans Chopped Tomatoes")
+        assertEquals(2.0, tomatoes.quantity!!, 0.001)
+        assertEquals("x 400g tin", tomatoes.unit)
+        assertEquals("chopped tomatoes", tomatoes.name)
+    }
+
+    @Test fun `new measuring words and one-of`() {
+        val lemongrass = p("1 stalk lemongrass (bottom half only, smashed and cut in 2-inch pieces)")
+        assertEquals("stalk", lemongrass.unit)
+        assertEquals("lemongrass", lemongrass.name)
+        val pastry = p("A sheet of ready rolled puff pastry")
+        assertEquals(1.0, pastry.quantity!!, 0.001)
+        assertEquals("sheet", pastry.unit)
+    }
+
+    @Test fun `title case is lower-cased and amounts in words are kept`() {
+        assertEquals("beef stock cubes", p("2 Beef Stock Cubes ((Beef Bouillon))").name)
+        val oil = p("Olive Oil, (as needed)")
+        assertEquals("olive oil", oil.name)
+        assertEquals("as needed", oil.amountText)
+    }
+}
+
+/** The screenshot from the first lessons export: text as read on the phone, with Claude's reading as the answer. */
+class ScreenshotLessonsTest {
+    private val text = javaClass.getResource("/lessons/chicken-pie-screenshot.txt")!!.readText()
+
+    @Test fun `wrapped lines are rejoined into whole steps`() {
+        val r = SchemaOrgMapper.toRecipe(BuiltInReader.fromText(text)!!, null, SourceType.IMAGE)
+        assertEquals(
+            listOf(
+                "Heat a drizzle of oil in a large, non-stick pan and add the chicken. Fry on a medium heat for around 5 minutes, or until no longer pink. Remove from the pan (It won't be 100% cooked through at this stage) and set aside.",
+                "Add the onion to the pan and fry for 5 minutes until soft. Stir in the garlic for the final minute.",
+                "Stir in the flour until it disappears.",
+                "Slowly add the chicken stock a little at a time, only adding more when it comes to the boil. Stir continuously.",
+                "When all the stock is used, stir in the cream, oregano, sun-dried tomatoes and grated cheese. Gently bring to the boil, stirring until the cheese has melted.",
+                "Season with salt and pepper",
+                "Return the chicken to the pan with the spinach and give it a good stir.",
+                "Divide the filling between 4 deep individual pie dishes, approximately 12cm across",
+                "Heat the oven to 190C (fan)",
+                "Roll out the pastry. Cut out 4 squares of pastry that will just fit on top of your Pie dishes.",
+                "Lay them on top of the dish and press the corners down so it stays in place.",
+                "Cut 8 heart shapes and 8 slightly smaller heart shapes (you can do any combination you like) out of the pastry.",
+                "Arrange them on top of the pastry square. Brush with egg.",
+                "Bake in the oven for 20 -25 minutes until cooked through and golden brown on top.",
+            ),
+            r.instructions.flatMap { it.steps },
+        )
+    }
+
+    @Test fun `status bar and run-together numbers are cleaned up`() {
+        val r = SchemaOrgMapper.toRecipe(BuiltInReader.fromText(text)!!, null, SourceType.IMAGE)
+        assertEquals(
+            listOf(
+                "500g chicken breast, cut into medium pieces",
+                "1 onion finely sliced",
+                "3 cloves of garlic finely chopped",
+                "1 tbsp flour",
+                "300ml double cream",
+                "300ml chicken stock",
+                "1/2 tsp oregano",
+                "10 sundried tomatoes finely chopped",
+                "50g finely grated cheddar cheese",
+                "50g fresh spinach",
+                "A sheet of ready rolled puff pastry",
+                "1 egg beaten",
+            ),
+            r.ingredients.map { it.raw },
+        )
+        // "Feeds 4-6" is the servings, not the title.
+        assertEquals(4, r.servings)
+        assertTrue(r.title != "Feeds 4-6")
+    }
+}
+
