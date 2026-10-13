@@ -171,7 +171,8 @@ class LessonLogTest {
         val parser = IngredientParser.parse("2 tbsp EACH: Paprika, Cumin, Chilli Powder")
         val claude = parser.copy(name = "paprika", note = "each of paprika, cumin and chilli powder")
         assertTrue(LessonLog.differs(parser, claude))
-        assertTrue(!LessonLog.differs(parser, parser.copy(name = "Medium Onions", note = "something else")))
+        // Only capitals or the note differing isn't a real disagreement.
+        assertTrue(!LessonLog.differs(parser, parser.copy(name = parser.name.uppercase(), note = "something else")))
     }
 
     @Test fun `canonicalises Claude's units`() {
