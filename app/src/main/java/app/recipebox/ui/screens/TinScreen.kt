@@ -1,5 +1,10 @@
 package app.recipebox.ui.screens
 
+import app.recipebox.importer.ImportScheduler
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -79,10 +84,15 @@ fun TinScreen(
     onOpen: (Long) -> Unit,
     onSettings: () -> Unit,
     onImportUrl: (String) -> Unit,
+    onImportScreenshots: (List<Uri>) -> Unit,
     onDismissImports: () -> Unit,
     onRemove: (Long) -> Unit,
     selectedId: Long? = null,
 ) {
+    // The photo picker returns screenshots in the order they were tapped, which is the page order.
+    val pickScreenshots = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(ImportScheduler.MAX_PAGES),
+    ) { uris -> if (uris.isNotEmpty()) onImportScreenshots(uris) }
     var removing by remember { mutableStateOf<Recipe?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var divider by rememberSaveable { mutableStateOf<String?>(null) }
@@ -197,7 +207,14 @@ fun TinScreen(
     }
 
     if (showAdd) {
-        AddLinkDialog(onDismiss = { showAdd = false }, onAdd = { onImportUrl(it); showAdd = false })
+        AddLinkDialog(
+            onDismiss = { showAdd = false },
+            onAdd = { onImportUrl(it); showAdd = false },
+            onPickScreenshots = {
+                showAdd = false
+                pickScreenshots.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+        )
     }
     removing?.let { recipe ->
         RemoveRecipeDialog(recipe.title, onRemove = { removing = null; onRemove(recipe.id) }, onDismiss = { removing = null })
@@ -349,7 +366,7 @@ private fun EmptyTin(onAdd: () -> Unit) {
 }
 
 @Composable
-private fun AddLinkDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+private fun AddLinkDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit, onPickScreenshots: () -> Unit) {
     var url by rememberSaveable { mutableStateOf("") }
     val valid = url.trim().startsWith("http")
     AlertDialog(
@@ -370,6 +387,14 @@ private fun AddLinkDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Text(
+                    "Or screenshots: pick up to ${ImportScheduler.MAX_PAGES} pages of one recipe, tapping them in order.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                StickerButton(onClick = onPickScreenshots, fill = Tin.Card, minHeight = 48.dp) {
+                    LineIcons.Camera()
+                    Text("Pick screenshots")
+                }
             }
         },
         confirmButton = {

@@ -82,6 +82,25 @@ object BuiltInReader {
     private val joinedNumber = Regex("""^(\d+)([A-Za-z]{2,})\b""")
     private val unitsAfterNumbers = setOf("g", "kg", "ml", "l", "oz", "lb", "lbs", "tsp", "tbsp", "cm", "mm", "cl", "x")
 
+    /**
+     * Joins the text of several screenshots of one recipe, in order. Neighbouring screenshots of a
+     * scrolling page usually overlap, so where the start of one page repeats the end of the one before,
+     * the repeat is dropped. Status bar lines (the clock and so on) are ignored when looking for overlap.
+     */
+    fun mergePages(pages: List<String>): String {
+        fun lines(page: String) = page.lines().map { it.trim() }.filter { it.isNotEmpty() && !statusBar.matches(it) }
+        val merged = mutableListOf<String>()
+        pages.forEach { page ->
+            val next = lines(page)
+            // The longest run of lines that ends the text so far and starts this page.
+            val overlap = (minOf(merged.size, next.size) downTo 1).firstOrNull { n ->
+                merged.subList(merged.size - n, merged.size) == next.subList(0, n)
+            } ?: 0
+            merged += next.drop(overlap)
+        }
+        return merged.joinToString("\n")
+    }
+
     /** Returns schema.org JSON, or null if no recipe could be found. */
     fun fromText(text: String, fallbackTitle: String? = null): JsonObject? {
         val lines = text.lines()

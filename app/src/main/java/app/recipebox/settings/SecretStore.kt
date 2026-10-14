@@ -45,6 +45,7 @@ class SecretStore(context: Context) {
 
     companion object {
         const val CLAUDE_API_KEY = "claude_api_key"
+        const val CLAUDE_ENABLED = "claude_enabled"
         const val OG_EMAIL = "og_email"
         const val OG_PASSWORD = "og_password"
         const val OG_SESSION = "og_session"

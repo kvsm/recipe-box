@@ -12,6 +12,8 @@ Dependency versions in `gradle/libs.versions.toml` are a known-good set from lat
 
 ## What it does
 
+- **Several screenshots, one recipe.** Share up to 10 screenshots at once from the gallery, or use "Pick screenshots" in the add box (tap them in page order). Claude reads them together, leaving out lines repeated where screenshots overlap and picking the one that shows the dish as the card photo. Without Claude, each page is read on the phone and stitched together the same way.
+- **Claude on or off.** Settings → Claude has a "Use Claude" switch. Off, everything is read on the phone (and Get ready, categories and tidy-up use the built-in fallbacks); the key stays saved.
 - **Share to save.** "Save to Recipe Box" appears in the share sheet for links, text and images. Imports run in the background (WorkManager), so you can go straight back to what you were doing.
 - **Import pipeline.** Recipe sites almost all embed schema.org Recipe JSON-LD, which is parsed for free. Pages without it, Instagram captions, pasted text and screenshots go to Claude (your own API key) with a forced tool call, so the output is always structured.
 - **Get ready (mise en place).** Every import gets a prep pass. Prep hiding in ingredient notes ("onions, finely chopped") or later steps ("preheat the oven", "marinate overnight") moves into a "Get ready" list at the start. Anything needing a long lead time gets a "Start the night before" sticker. With a Claude key the whole method is restructured; without one, a built-in pass catches the obvious cases. The imported method is always kept, behind "Show original".

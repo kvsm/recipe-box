@@ -29,18 +29,17 @@ class ShareReceiverActivity : ComponentActivity() {
     }
 
     private suspend fun handle(intent: Intent?): String {
+        // Several screenshots at once: pages of one recipe, in the order they were picked.
+        if (intent?.action == Intent.ACTION_SEND_MULTIPLE) {
+            val uris = IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+            if (uris.isEmpty()) return "No images found"
+            return importScreenshots(uris)
+        }
         if (intent?.action != Intent.ACTION_SEND) return "Nothing to save"
 
         if (intent.type.orEmpty().startsWith("image/")) {
             val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java) ?: return "No image found"
-            val file = withContext(Dispatchers.IO) {
-                val target = ImportScheduler.newImportFile(this@ShareReceiverActivity, "img")
-                contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
-                    ?: throw IllegalStateException("couldn't open the image")
-                target
-            }
-            ImportScheduler.importImage(this, file.path)
-            return "Reading your screenshot…"
+            return importScreenshots(listOf(uri))
         }
 
         val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
@@ -55,6 +54,17 @@ class ShareReceiverActivity : ComponentActivity() {
         } else {
             ImportScheduler.importText(this, text)
             "Reading that recipe…"
+        }
+    }
+
+    private suspend fun importScreenshots(uris: List<Uri>): String {
+        val pages = uris.take(ImportScheduler.MAX_PAGES)
+        val files = withContext(Dispatchers.IO) { ImportScheduler.copyImages(this@ShareReceiverActivity, pages) }
+        ImportScheduler.importImages(this, files)
+        return when {
+            uris.size > pages.size -> "Reading the first ${pages.size} screenshots…"
+            pages.size > 1 -> "Reading your ${pages.size} screenshots as one recipe…"
+            else -> "Reading your screenshot…"
         }
     }
 

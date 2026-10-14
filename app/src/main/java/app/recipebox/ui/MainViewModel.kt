@@ -105,6 +105,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _hasClaudeKey = MutableStateFlow(false)
     val hasClaudeKey = _hasClaudeKey.asStateFlow()
+    private val _claudeEnabled = MutableStateFlow(true)
+    /** The Settings switch. Claude is only used when this is on and there's a key. */
+    val claudeEnabled = _claudeEnabled.asStateFlow()
+
+    fun setClaudeEnabled(on: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            container.claude.enabled = on
+            _claudeEnabled.value = container.claude.enabled
+            _messages.emit(if (on) "Claude's on" else "Claude's off: everything's read on your phone")
+        }
+    }
     private val _ourGroceriesConnected = MutableStateFlow(false)
     val ourGroceriesConnected = _ourGroceriesConnected.asStateFlow()
     private val _ourGroceriesEmail = MutableStateFlow<String?>(null)
@@ -124,6 +135,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshStatus() {
         viewModelScope.launch(Dispatchers.IO) {
             _hasClaudeKey.value = container.claude.hasKey()
+            _claudeEnabled.value = container.claude.enabled
             _ourGroceriesConnected.value = container.ourGroceries.isConnected()
             _ourGroceriesEmail.value = container.ourGroceries.connectedEmail()
             _listName.value = container.groceries.listName
@@ -151,6 +163,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun importUrl(url: String) {
         ImportScheduler.importUrl(getApplication(), url.trim())
+    }
+
+    /** Screenshots picked in the app: pages of one recipe, in the order they were picked. */
+    fun importScreenshots(uris: List<Uri>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val message = runCatching {
+                val files = ImportScheduler.copyImages(getApplication(), uris.take(ImportScheduler.MAX_PAGES))
+                ImportScheduler.importImages(getApplication(), files)
+                if (files.size > 1) "Reading your ${files.size} screenshots as one recipe…" else "Reading your screenshot…"
+            }.getOrElse { "Couldn't open those screenshots: ${it.message}" }
+            _messages.emit(message)
+        }
     }
 
     /** Saves a hand-fixed ingredient and, if the built-in parser got it wrong, keeps it as a parser lesson. */

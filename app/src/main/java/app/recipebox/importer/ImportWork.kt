@@ -21,12 +21,13 @@ import java.util.concurrent.TimeUnit
 sealed interface ImportRequest {
     data class Url(val url: String) : ImportRequest
     data class TextFile(val path: String) : ImportRequest
-    data class ImageFile(val path: String) : ImportRequest
+    /** One or more screenshots of the same recipe, in page order. */
+    data class ImageFiles(val paths: List<String>) : ImportRequest
 
     fun toData(): Data = when (this) {
         is Url -> workDataOf(KEY_KIND to "url", KEY_VALUE to url)
         is TextFile -> workDataOf(KEY_KIND to "text", KEY_VALUE to path)
-        is ImageFile -> workDataOf(KEY_KIND to "image", KEY_VALUE to path)
+        is ImageFiles -> workDataOf(KEY_KIND to "images", KEY_VALUE to paths.joinToString("\n"))
     }
 
     companion object {
@@ -38,7 +39,8 @@ sealed interface ImportRequest {
             return when (data.getString(KEY_KIND)) {
                 "url" -> Url(value)
                 "text" -> TextFile(value)
-                "image" -> ImageFile(value)
+                "image" -> ImageFiles(listOf(value)) // queued by an older version: one screenshot
+                "images" -> ImageFiles(value.split('\n').filter { it.isNotBlank() })
                 else -> null
             }
         }
@@ -88,8 +90,21 @@ object ImportScheduler {
         enqueue(context, ImportRequest.TextFile(file.path), "shared text")
     }
 
-    fun importImage(context: Context, path: String) {
-        enqueue(context, ImportRequest.ImageFile(path), "your screenshot")
+    /** Screenshots of one recipe, in page order. */
+    fun importImages(context: Context, paths: List<String>) {
+        if (paths.isEmpty()) return
+        enqueue(context, ImportRequest.ImageFiles(paths), if (paths.size == 1) "your screenshot" else "${paths.size} screenshots")
+    }
+
+    /** The most pages read as one recipe: plenty for a long recipe, and keeps the request to Claude a sensible size. */
+    const val MAX_PAGES = 10
+
+    /** Copies picked or shared images into app storage, in order, for the worker to read later. */
+    fun copyImages(context: Context, uris: List<android.net.Uri>): List<String> = uris.map { uri ->
+        val target = newImportFile(context, "img")
+        context.contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
+            ?: throw IllegalStateException("couldn't open an image")
+        target.path
     }
 
     /** Files for pending imports live in app storage so the worker can read them later. */

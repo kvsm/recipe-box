@@ -19,6 +19,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
@@ -51,7 +52,7 @@ class RecipeImporter(
     suspend fun import(request: ImportRequest, canRetry: Boolean = true): Long = when (request) {
         is ImportRequest.Url -> importUrl(request.url, canRetry)
         is ImportRequest.TextFile -> importText(File(request.path), canRetry)
-        is ImportRequest.ImageFile -> importImage(File(request.path), canRetry)
+        is ImportRequest.ImageFiles -> importImages(request.paths.map(::File), canRetry)
     }
 
     private suspend fun importUrl(url: String, canRetry: Boolean): Long {
@@ -91,31 +92,38 @@ class RecipeImporter(
         return id
     }
 
-    private suspend fun importImage(file: File, canRetry: Boolean): Long {
+    /** One or more screenshots of a recipe, in page order, read as one recipe. */
+    private suspend fun importImages(files: List<File>, canRetry: Boolean): Long {
+        if (files.isEmpty()) throw ImportException("No screenshots to read.")
+        val raw = RawSnapshot("image_files", files.joinToString("\n") { it.absolutePath }, null)
         if (extractor.available()) {
             try {
-                val bytes = withContext(Dispatchers.Default) { ImageUtils.loadScaledJpeg(file) }
-                val schema = extractor.extract(ClaudeExtractor.Input.Image(bytes))
-                // The screenshot only becomes the card photo if it actually shows the food.
+                val pages = withContext(Dispatchers.Default) { files.map { ImageUtils.loadScaledJpeg(it) } }
+                val schema = extractor.extract(ClaudeExtractor.Input.Images(pages))
+                // A screenshot only becomes the card photo if it actually shows the food.
                 val showsDish = schema["shows_dish"]?.jsonPrimitive?.booleanOrNull == true
-                val cover = if (showsDish) photos.copyFrom(file.toUri()) else null
+                val photoPage = schema["photo_image"]?.jsonPrimitive?.intOrNull?.let { files.getOrNull(it - 1) } ?: files.first()
+                val cover = if (showsDish) photos.copyFrom(photoPage.toUri()) else null
                 val recipe = SchemaOrgMapper.toRecipe(schema, null, SourceType.IMAGE).copy(imageUrl = cover, readBy = ReadBy.CLAUDE)
                 // Also read it the no-key way, to learn how on-device text from screenshots trips the reader up.
-                runCatching { OnDeviceText.read(file) }.getOrNull()?.let { ocr ->
+                runCatching { readPagesOnPhone(files) }.getOrNull()?.let { ocr ->
                     recordReaderLesson("screenshot", key = ocr, input = ocr, claude = schema, fallbackTitle = null)
                 }
-                return save(recipe, RawSnapshot("image_file", file.absolutePath, null))
+                return save(recipe, raw)
             } catch (e: Exception) {
                 rethrowIfRetryable(e, canRetry)
             }
         }
-        // Without Claude: read the text on the phone, then the built-in reader. No photo, as we can't tell
-        // whether the screenshot shows the food or just words.
-        val text = OnDeviceText.read(file)
-        val schema = BuiltInReader.fromText(text) ?: throw noRecipe()
+        // Without Claude: read the text on the phone, page by page, then the built-in reader. No photo,
+        // as we can't tell whether a screenshot shows the food or just words.
+        val schema = BuiltInReader.fromText(readPagesOnPhone(files)) ?: throw noRecipe()
         val recipe = SchemaOrgMapper.toRecipe(schema, null, SourceType.IMAGE).copy(readBy = ReadBy.BUILT_IN)
-        return save(recipe, RawSnapshot("image_file", file.absolutePath, null))
+        return save(recipe, raw)
     }
+
+    /** Each page's text, joined, with any overlap between neighbouring screenshots taken out. */
+    private suspend fun readPagesOnPhone(files: List<File>): String =
+        BuiltInReader.mergePages(files.map { OnDeviceText.read(it) })
 
     /** Claude if there's a key and it works; the built-in reader otherwise. */
     private suspend fun readText(text: String, url: String?, fallbackTitle: String?, canRetry: Boolean): Pair<JsonObject, ReadBy> {
@@ -180,15 +188,16 @@ class RecipeImporter(
      * the prep pass. Keeps the recipe's place in the tin and its photo. Hand fixes to ingredients are replaced.
      */
     suspend fun tidyUp(recipe: Recipe): Recipe {
-        if (!extractor.available()) throw ImportException("Add a Claude key in Settings first.")
+        if (!extractor.available()) throw ImportException("Turn Claude on in Settings first.")
         val raw = repository.raw(recipe.id) ?: throw ImportException("There's no saved original for this one to re-read.")
         val (schema, readBy) = when (raw.kind) {
             "schema_org" -> Json.parseToJsonElement(raw.payload).jsonObject to ReadBy.STRUCTURED
             "page_text", "text" -> extractor.extract(ClaudeExtractor.Input.Text(raw.payload, raw.sourceUrl)) to ReadBy.CLAUDE
-            "image_file" -> {
-                val file = File(raw.payload).takeIf { it.exists() } ?: throw ImportException("The original screenshot is gone.")
-                val bytes = withContext(Dispatchers.Default) { ImageUtils.loadScaledJpeg(file) }
-                extractor.extract(ClaudeExtractor.Input.Image(bytes)) to ReadBy.CLAUDE
+            "image_file", "image_files" -> {
+                val files = raw.payload.split('\n').filter { it.isNotBlank() }.map(::File)
+                if (files.isEmpty() || files.any { !it.exists() }) throw ImportException("The original screenshots are gone.")
+                val pages = withContext(Dispatchers.Default) { files.map { ImageUtils.loadScaledJpeg(it) } }
+                extractor.extract(ClaudeExtractor.Input.Images(pages)) to ReadBy.CLAUDE
             }
             else -> throw ImportException("Can't re-read this one.")
         }

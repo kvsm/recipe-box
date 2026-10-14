@@ -29,6 +29,14 @@ class ClaudeClient(
 ) {
     fun hasKey(): Boolean = !secrets.get(SecretStore.CLAUDE_API_KEY).isNullOrBlank()
 
+    /** The Settings switch: on unless turned off. Turning it off keeps the key. */
+    var enabled: Boolean
+        get() = secrets.get(SecretStore.CLAUDE_ENABLED) != "false"
+        set(value) = secrets.put(SecretStore.CLAUDE_ENABLED, if (value) null else "false")
+
+    /** Whether to use Claude right now: there's a key, and the switch is on. Everything Claude-powered checks this. */
+    fun isOn(): Boolean = enabled && hasKey()
+
     /** Sends [content] and returns the forced tool's `input` object. */
     suspend fun callTool(
         system: String,

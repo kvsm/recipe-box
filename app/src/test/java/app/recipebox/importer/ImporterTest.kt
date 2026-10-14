@@ -412,3 +412,26 @@ class ScreenshotLessonsTest {
     }
 }
 
+
+class MultiPageTest {
+    @Test fun `overlapping screenshots are stitched without repeats`() {
+        val page1 = "14:25\nChicken pie\nIngredients\n500g chicken breast\n1 onion finely sliced\n3 cloves of garlic"
+        val page2 = "14:26\n1 onion finely sliced\n3 cloves of garlic\n1 tbsp flour\nMethod\nFry the chicken."
+        val page3 = "14:27\nBake for 25 minutes."
+        assertEquals(
+            "Chicken pie\nIngredients\n500g chicken breast\n1 onion finely sliced\n3 cloves of garlic\n1 tbsp flour\nMethod\nFry the chicken.\nBake for 25 minutes.",
+            BuiltInReader.mergePages(listOf(page1, page2, page3)),
+        )
+    }
+
+    @Test fun `pages without overlap are simply joined`() {
+        assertEquals("a\nb\nc\nd", BuiltInReader.mergePages(listOf("a\nb", "c\nd")))
+    }
+
+    @Test fun `old single-screenshot imports still read`() {
+        val old = androidx.work.workDataOf("kind" to "image", "value" to "/data/x.img")
+        assertEquals(ImportRequest.ImageFiles(listOf("/data/x.img")), ImportRequest.from(old))
+        val many = ImportRequest.ImageFiles(listOf("/a.img", "/b.img"))
+        assertEquals(many, ImportRequest.from(many.toData()))
+    }
+}

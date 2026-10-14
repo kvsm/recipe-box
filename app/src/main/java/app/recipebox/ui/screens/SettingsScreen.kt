@@ -27,6 +27,10 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,6 +66,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     hasClaudeKey: Boolean,
+    claudeEnabled: Boolean,
+    onClaudeEnabledChange: (Boolean) -> Unit,
     ourGroceriesConnected: Boolean,
     ourGroceriesEmail: String?,
     units: UnitSystem,
@@ -140,8 +146,33 @@ fun SettingsScreen(
             }
 
             Panel("Claude") {
+                if (hasClaudeKey) {
+                    // One tap to stop (or start) using Claude, without losing the key.
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .toggleable(value = claudeEnabled, role = Role.Switch, onValueChange = onClaudeEnabledChange),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Use Claude", style = MaterialTheme.typography.titleMedium, color = Tin.Ink)
+                        Switch(
+                            checked = claudeEnabled,
+                            onCheckedChange = null,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Tin.Card,
+                                checkedTrackColor = Tin.Pea,
+                                checkedBorderColor = Tin.Ink,
+                                uncheckedThumbColor = Tin.Ink,
+                                uncheckedTrackColor = Tin.Paper,
+                                uncheckedBorderColor = Tin.Ink,
+                            ),
+                        )
+                    }
+                }
                 Text(
-                    if (hasClaudeKey) {
+                    if (hasClaudeKey && !claudeEnabled) {
+                        "Claude's off. Everything is read on your phone, and your key stays saved for when you switch it back on."
+                    } else if (hasClaudeKey) {
                         "Your API key is saved. Claude reads captions, screenshots and pages without recipe data, and pulls the prep to the front of every recipe."
                     } else {
                         "No key needed to get going: recipe sites, captions and screenshots are all read on your phone. A key makes the trickier ones tidier and does the full prep-first restructure, and anything read without it can be tidied up later."

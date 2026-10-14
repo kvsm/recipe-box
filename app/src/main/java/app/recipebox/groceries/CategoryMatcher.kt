@@ -80,7 +80,7 @@ class CategoryMatcher(context: Context, private val claude: ClaudeClient, privat
         }
 
         val unknown = items.map { it.name.lowercase() }.filter { it !in result }.distinct()
-        if (unknown.isNotEmpty() && claude.hasKey()) {
+        if (unknown.isNotEmpty() && claude.isOn()) {
             try {
                 val inUse = history.values.mapNotNull { byLower[it.lowercase()] }.toSet()
                 val fromClaude = askClaude(unknown, categories, inUse).filterValues { it.lowercase() in byLower }

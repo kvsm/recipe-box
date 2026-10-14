@@ -23,11 +23,12 @@ class ClaudeExtractor(private val claude: ClaudeClient) {
 
     sealed interface Input {
         data class Text(val text: String, val sourceUrl: String?) : Input
-        class Image(val jpegBytes: ByteArray) : Input
+        /** One or more screenshots of the same recipe, in page order. */
+        class Images(val pages: List<ByteArray>) : Input
     }
 
-    /** True when there's a Claude key to use. */
-    fun available(): Boolean = claude.hasKey()
+    /** True when there's a Claude key and Claude is switched on in Settings. */
+    fun available(): Boolean = claude.isOn()
 
     suspend fun extract(input: Input): JsonObject {
         val content = buildJsonArray {
@@ -36,18 +37,34 @@ class ClaudeExtractor(private val claude: ClaudeClient) {
                     put("type", "text")
                     put("text", (input.sourceUrl?.let { "Source: $it\n\n" } ?: "") + input.text)
                 }
-                is Input.Image -> {
-                    addJsonObject {
-                        put("type", "image")
-                        putJsonObject("source") {
-                            put("type", "base64")
-                            put("media_type", "image/jpeg")
-                            put("data", Base64.getEncoder().encodeToString(input.jpegBytes))
+                is Input.Images -> {
+                    input.pages.forEachIndexed { i, page ->
+                        if (input.pages.size > 1) addJsonObject {
+                            put("type", "text")
+                            put("text", "Image ${i + 1}:")
+                        }
+                        addJsonObject {
+                            put("type", "image")
+                            putJsonObject("source") {
+                                put("type", "base64")
+                                put("media_type", "image/jpeg")
+                                put("data", Base64.getEncoder().encodeToString(page))
+                            }
                         }
                     }
                     addJsonObject {
                         put("type", "text")
-                        put("text", "Extract the recipe from this image.")
+                        put(
+                            "text",
+                            if (input.pages.size == 1) {
+                                "Extract the recipe from this image."
+                            } else {
+                                "These ${input.pages.size} images are consecutive screenshots or pages of one recipe, in order. " +
+                                    "Read them as one recipe. Neighbouring screenshots often overlap: where the same lines appear " +
+                                    "at the bottom of one and the top of the next, include them once. Set photo_image to the image " +
+                                    "that best shows the finished food, if any does."
+                            },
+                        )
                     }
                 }
             }
@@ -102,7 +119,8 @@ class ClaudeExtractor(private val claude: ClaudeClient) {
                 "type": "object",
                 "properties": {
                   "is_recipe": {"type": "boolean"},
-                  "shows_dish": {"type": "boolean", "description": "for images: true if the picture prominently shows the finished food, not just text"},
+                  "shows_dish": {"type": "boolean", "description": "for images: true if a picture prominently shows the finished food, not just text"},
+                  "photo_image": {"type": "integer", "description": "for several images: which one (1 = first) best shows the finished food"},
                   "name": {"type": "string"},
                   "description": {"type": "string"},
                   "author": {"type": "string"},

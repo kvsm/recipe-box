@@ -39,7 +39,7 @@ class PrepPlanner(private val claude: ClaudeClient, private val gaps: LessonLog)
 
     suspend fun plan(recipe: Recipe): Recipe {
         if (recipe.originalInstructions.isEmpty() && recipe.ingredients.isEmpty()) return recipe
-        if (claude.hasKey()) {
+        if (claude.isOn()) {
             try {
                 return planWithClaude(recipe)
             } catch (e: CancellationException) {

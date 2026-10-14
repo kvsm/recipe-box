@@ -71,6 +71,8 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
     val imports by vm.imports.collectAsStateWithLifecycle()
     val justSaved by vm.justSaved.collectAsStateWithLifecycle()
     val hasClaudeKey by vm.hasClaudeKey.collectAsStateWithLifecycle()
+    val claudeEnabled by vm.claudeEnabled.collectAsStateWithLifecycle()
+    val claudeOn = hasClaudeKey && claudeEnabled
     val sendingToList by vm.sendingToList.collectAsStateWithLifecycle()
     val units by vm.units.collectAsStateWithLifecycle()
 
@@ -97,6 +99,8 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
             val lessons by vm.lessons.collectAsStateWithLifecycle()
             SettingsScreen(
                 hasClaudeKey = hasClaudeKey,
+                claudeEnabled = claudeEnabled,
+                onClaudeEnabledChange = vm::setClaudeEnabled,
                 ourGroceriesConnected = ogConnected,
                 ourGroceriesEmail = ogEmail,
                 units = unitsSetting,
@@ -128,6 +132,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                         onOpen = { openId = it },
                         onSettings = { settings = true },
                         onImportUrl = vm::importUrl,
+                        onImportScreenshots = vm::importScreenshots,
                         onDismissImports = vm::dismissFinishedImports,
                         onRemove = { removeId -> vm.delete(removeId); if (removeId == id) openId = null },
                         selectedId = id,
@@ -148,7 +153,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                             onDelete = { vm.delete(current.id); openId = null },
                             onEditIngredient = { index, fixed -> vm.updateIngredient(current, index, fixed) },
                             onSetPhoto = { uri, camera -> vm.setPhoto(current, uri, camera) },
-                            canTidyUp = hasClaudeKey && current.couldTidyUp,
+                            canTidyUp = claudeOn && current.couldTidyUp,
                             onTidyUp = { vm.tidyUp(current) },
                             showBack = false,
                         )
@@ -182,7 +187,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
                         onDelete = { vm.delete(id); openId = null },
                         onEditIngredient = { index, fixed -> vm.updateIngredient(current, index, fixed) },
                         onSetPhoto = { uri, camera -> vm.setPhoto(current, uri, camera) },
-                        canTidyUp = hasClaudeKey && current.couldTidyUp,
+                        canTidyUp = claudeOn && current.couldTidyUp,
                         onTidyUp = { vm.tidyUp(current) },
                     )
                 }
@@ -196,6 +201,7 @@ private fun RecipeBoxRoot(vm: MainViewModel = viewModel()) {
             onOpen = { openId = it },
             onSettings = { settings = true },
             onImportUrl = vm::importUrl,
+                        onImportScreenshots = vm::importScreenshots,
             onDismissImports = vm::dismissFinishedImports,
             onRemove = vm::delete,
         )
